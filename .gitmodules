@@ -1,0 +1,3 @@
+[submodule "rustc_plugin"]
+	path = rustc_plugin
+	url = https://github.com/artemagvanian/rustc_plugin
