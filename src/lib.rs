@@ -26,7 +26,7 @@ extern crate rustc_type_ir;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 
-use body_cache::{dump_mir_and_borrowck_facts, is_mir_available, substituted_mir};
+use body_cache::{dump_mir_and_borrowck_facts, substituted_mir};
 use clap::Parser;
 use reachability::collect_mono_items_from;
 use rustc_hir::ItemKind;
@@ -217,8 +217,7 @@ fn dump_all_items(tcx: TyCtxt, _args: &PeircePluginArgs) -> rustc_driver::Compil
             for item in items.into_iter() {
                 match item {
                     MonoItem::Fn(instance) => {
-                        assert!(is_mir_available(instance.def_id(), tcx));
-                        let _body = substituted_mir(&instance, tcx);
+                        let _body = substituted_mir(&instance, tcx).unwrap();
                     }
                     MonoItem::Static(_def_id) => {}
                     MonoItem::GlobalAsm(_item_id) => {}

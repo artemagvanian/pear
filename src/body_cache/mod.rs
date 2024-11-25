@@ -3,17 +3,16 @@ mod encoder;
 
 pub use body_cache::{dump_mir_and_borrowck_facts, load_body_and_facts};
 
-use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_hir::def::DefKind;
 use rustc_middle::{
     mir::Body,
     ty::{self, Instance, TyCtxt},
 };
 
-pub fn is_mir_available<'tcx>(def_id: DefId, tcx: TyCtxt<'tcx>) -> bool {
-    load_body_and_facts(tcx, def_id).is_ok()
-}
-
-pub fn substituted_mir<'tcx>(instance: &Instance<'tcx>, tcx: TyCtxt<'tcx>) -> Body<'tcx> {
+pub fn substituted_mir<'tcx>(
+    instance: &Instance<'tcx>,
+    tcx: TyCtxt<'tcx>,
+) -> Result<Body<'tcx>, String> {
     let instance_body = match instance.def {
         ty::InstanceDef::Item(def) => {
             let def_kind = tcx.def_kind(def);
@@ -26,7 +25,7 @@ pub fn substituted_mir<'tcx>(instance: &Instance<'tcx>, tcx: TyCtxt<'tcx>) -> Bo
                 | DefKind::InlineConst => tcx.mir_for_ctfe(def).clone(),
                 _ => {
                     let def_id = instance.def_id();
-                    let cached_body = load_body_and_facts(tcx, def_id).unwrap();
+                    let cached_body = load_body_and_facts(tcx, def_id)?;
                     tcx.erase_regions(cached_body.owned_body())
                 }
             }
@@ -42,11 +41,11 @@ pub fn substituted_mir<'tcx>(instance: &Instance<'tcx>, tcx: TyCtxt<'tcx>) -> Bo
         | ty::InstanceDef::ThreadLocalShim(..)
         | ty::InstanceDef::FnPtrAddrShim(..) => tcx.mir_shims(instance.def).clone(),
     };
-    instance
+    Ok(instance
         .try_instantiate_mir_and_normalize_erasing_regions(
             tcx,
             ty::ParamEnv::reveal_all(),
             ty::EarlyBinder::bind(instance_body.clone()),
         )
-        .unwrap_or(instance_body)
+        .unwrap_or(instance_body))
 }
