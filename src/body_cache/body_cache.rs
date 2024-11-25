@@ -11,9 +11,10 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
+use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts;
 
-use crate::body_cache::encoder::{decode_from_file, encode_to_file};
+use crate::body_cache::encoder::{decode_from_file, encode_to_file, PeirceDecoder, PeirceEncoder};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
@@ -39,10 +40,35 @@ impl<'tcx> CachedBody<'tcx> {
     }
 }
 
+pub trait LocalAnalysis<'tcx> {
+    type Out: Encodable<PeirceEncoder<'tcx>> + for<'a> Decodable<PeirceDecoder<'tcx, 'a>>;
+
+    fn construct(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        local_def_id: LocalDefId,
+    ) -> Self::Out;
+}
+
+pub struct CachedBodyAnalysis {}
+
+impl<'tcx> LocalAnalysis<'tcx> for CachedBodyAnalysis {
+    type Out = CachedBody<'tcx>;
+
+    fn construct(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        local_def_id: LocalDefId,
+    ) -> Self::Out {
+        Self::Out::retrieve(tcx, local_def_id)
+    }
+}
+
 /// A visitor to collect all bodies in the crate and write them to disk.
-struct DumpingVisitor<'tcx> {
+struct DumpingVisitor<'tcx, A: LocalAnalysis<'tcx>> {
     tcx: TyCtxt<'tcx>,
     target_dir: PathBuf,
+    analysis: A,
 }
 
 /// Some data in a [Body] is not cross-crate compatible. Usually because it
@@ -64,7 +90,7 @@ fn clean_undecodable_data_from_body(body: &mut Body) {
     }
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
+impl<'tcx, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx, A> {
     type NestedFilter = OnlyBodies;
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
@@ -76,9 +102,9 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         function_declaration: &'tcx rustc_hir::FnDecl<'tcx>,
         body_id: rustc_hir::BodyId,
         _: rustc_span::Span,
-        local_def_id: rustc_hir::def_id::LocalDefId,
+        local_def_id: LocalDefId,
     ) {
-        let to_write = CachedBody::retrieve(self.tcx, local_def_id);
+        let to_write = self.analysis.construct(self.tcx, local_def_id);
 
         let dir = &self.target_dir;
         let path = dir.join(
@@ -109,15 +135,16 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 ///
 /// Ensure this gets called early in the compiler before the unoptimmized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
+pub fn dump_mir_and_borrowck_facts<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tcx>, analysis: A) {
     let mut vis = DumpingVisitor {
         tcx,
         target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
+        analysis,
     };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
 }
 
-const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
+const INTERMEDIATE_ARTIFACT_EXT: &str = "peirce_cache";
 
 /// Get the path where artifacts from this crate would be stored. Unlike
 /// [`TyCtxt::crate_extern_paths`] this function does not crash when supplied
@@ -134,7 +161,10 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-pub fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> Result<CachedBody<'_>, String> {
+pub fn load_body_and_facts<'tcx, A: LocalAnalysis<'tcx>>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Result<A::Out, String> {
     let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for path in &paths {
         let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
@@ -142,7 +172,6 @@ pub fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> Result<CachedBody<
             return Ok(data);
         };
     }
-
     return Err(format!(
         "No facts for {def_id:?} found at any path tried: {paths:?}"
     ));

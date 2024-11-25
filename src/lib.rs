@@ -26,7 +26,7 @@ extern crate rustc_type_ir;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 
-use body_cache::{dump_mir_and_borrowck_facts, substituted_mir};
+use body_cache::{dump_mir_and_borrowck_facts, substituted_mir, CachedBodyAnalysis};
 use clap::Parser;
 use reachability::collect_mono_items_from;
 use rustc_hir::ItemKind;
@@ -163,7 +163,7 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
+            dump_mir_and_borrowck_facts(tcx, CachedBodyAnalysis {});
         });
         rustc_driver::Compilation::Continue
     }
@@ -186,7 +186,7 @@ impl rustc_driver::Callbacks for PeircePluginCallbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
+            dump_mir_and_borrowck_facts(tcx, CachedBodyAnalysis {});
         });
         rustc_driver::Compilation::Continue
     }
