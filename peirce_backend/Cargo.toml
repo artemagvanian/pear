@@ -1,0 +1,19 @@
+[package]
+name = "peirce_backend"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[dependencies]
+rustc_plugin = { workspace = true }
+rustc_utils = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+log = { workspace = true }
+env_logger = { workspace = true }
+
+clap = { workspace = true }

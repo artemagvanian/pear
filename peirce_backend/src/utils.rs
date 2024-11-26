@@ -1,13 +1,10 @@
-mod body_cache;
-mod encoder;
-
-pub use body_cache::{dump_mir_and_borrowck_facts, load_body_and_facts, CachedBodyAnalysis};
-
 use rustc_hir::def::DefKind;
 use rustc_middle::{
     mir::Body,
     ty::{self, Instance, TyCtxt},
 };
+
+use crate::{caching::load_local_analysis_results, local_analysis::CachedBodyAnalysis};
 
 pub fn substituted_mir<'tcx>(
     instance: &Instance<'tcx>,
@@ -25,7 +22,8 @@ pub fn substituted_mir<'tcx>(
                 | DefKind::InlineConst => tcx.mir_for_ctfe(def).clone(),
                 _ => {
                     let def_id = instance.def_id();
-                    let cached_body = load_body_and_facts::<CachedBodyAnalysis>(tcx, def_id)?;
+                    let cached_body =
+                        load_local_analysis_results::<CachedBodyAnalysis>(tcx, def_id)?;
                     tcx.erase_regions(cached_body.owned_body())
                 }
             }

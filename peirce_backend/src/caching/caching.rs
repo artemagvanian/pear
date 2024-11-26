@@ -4,93 +4,21 @@ use rustc_hir::{
     def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
-use rustc_macros::{TyDecodable, TyEncodable};
-use rustc_middle::{
-    hir::nested_filter::OnlyBodies,
-    mir::{Body, ClearCrossCrate, StatementKind},
-    ty::TyCtxt,
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
+
+use crate::{
+    caching::encoder::{decode_from_file, encode_to_file},
+    local_analysis::LocalAnalysis,
 };
 
-use rustc_serialize::{Decodable, Encodable};
-use rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts;
-
-use crate::body_cache::encoder::{decode_from_file, encode_to_file, PeirceDecoder, PeirceEncoder};
-
-/// A mir [`Body`] and all the additional borrow checking facts that our
-/// points-to analysis needs.
-#[derive(TyDecodable, TyEncodable, Debug)]
-pub struct CachedBody<'tcx> {
-    body: Body<'tcx>,
-}
-
-impl<'tcx> CachedBody<'tcx> {
-    /// Retrieve a body and the necessary facts for a local item.
-    ///
-    /// Ensure this is called early enough in the compiler so that the body has not been stolen yet.
-    fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
-        let body_with_facts = get_body_with_borrowck_facts(tcx, local_def_id);
-        let mut body = body_with_facts.body.clone();
-        clean_undecodable_data_from_body(&mut body);
-
-        Self { body }
-    }
-
-    pub fn owned_body(self) -> Body<'tcx> {
-        self.body
-    }
-}
-
-pub trait LocalAnalysis<'tcx> {
-    type Out: Encodable<PeirceEncoder<'tcx>> + for<'a> Decodable<PeirceDecoder<'tcx, 'a>>;
-
-    fn construct(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        local_def_id: LocalDefId,
-    ) -> Self::Out;
-}
-
-pub struct CachedBodyAnalysis {}
-
-impl<'tcx> LocalAnalysis<'tcx> for CachedBodyAnalysis {
-    type Out = CachedBody<'tcx>;
-
-    fn construct(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        local_def_id: LocalDefId,
-    ) -> Self::Out {
-        Self::Out::retrieve(tcx, local_def_id)
-    }
-}
-
 /// A visitor to collect all bodies in the crate and write them to disk.
-struct DumpingVisitor<'tcx, A: LocalAnalysis<'tcx>> {
+struct DumpingVisitor<'tcx, 'a, A: LocalAnalysis<'tcx>> {
     tcx: TyCtxt<'tcx>,
     target_dir: PathBuf,
-    analysis: A,
+    analysis: &'a A,
 }
 
-/// Some data in a [Body] is not cross-crate compatible. Usually because it
-/// involves storing a [LocalDefId]. This function makes sure to sanitize those
-/// out.
-fn clean_undecodable_data_from_body(body: &mut Body) {
-    for scope in body.source_scopes.iter_mut() {
-        scope.local_data = ClearCrossCrate::Clear;
-    }
-
-    for stmt in body
-        .basic_blocks_mut()
-        .iter_mut()
-        .flat_map(|bb| bb.statements.iter_mut())
-    {
-        if matches!(stmt.kind, StatementKind::FakeRead(_)) {
-            stmt.make_nop()
-        }
-    }
-}
-
-impl<'tcx, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx, A> {
+impl<'tcx, 'a, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx, 'a, A> {
     type NestedFilter = OnlyBodies;
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
@@ -135,7 +63,7 @@ impl<'tcx, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisitor<
 ///
 /// Ensure this gets called early in the compiler before the unoptimmized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tcx>, analysis: A) {
+pub fn dump_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tcx>, analysis: &A) {
     let mut vis = DumpingVisitor {
         tcx,
         target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
@@ -149,7 +77,7 @@ const INTERMEDIATE_ARTIFACT_EXT: &str = "peirce_cache";
 /// Get the path where artifacts from this crate would be stored. Unlike
 /// [`TyCtxt::crate_extern_paths`] this function does not crash when supplied
 /// with [`LOCAL_CRATE`].
-pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<PathBuf> {
+fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<PathBuf> {
     if krate == LOCAL_CRATE {
         vec![intermediate_out_dir(tcx, ext)]
     } else {
@@ -161,7 +89,7 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-pub fn load_body_and_facts<'tcx, A: LocalAnalysis<'tcx>>(
+pub fn load_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Result<A::Out, String> {
@@ -184,7 +112,7 @@ pub fn load_body_and_facts<'tcx, A: LocalAnalysis<'tcx>>(
 /// stem of `<crate_name>-<hash>`. I haven't found a clean way to get the same
 /// name in both places, so i just assume that these two will always have this
 /// relation and prepend the `"lib"` here.
-pub fn intermediate_out_dir(tcx: TyCtxt, ext: &str) -> PathBuf {
+fn intermediate_out_dir(tcx: TyCtxt, ext: &str) -> PathBuf {
     let rustc_out_file = tcx.output_filenames(()).with_extension(ext);
     let dir = rustc_out_file
         .parent()

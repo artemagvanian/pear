@@ -1,17 +1,16 @@
-[package]
-name = "peirce"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["peirce_backend", "peirce_frontend"]
+exclude = ["tests"]
+resolver = "2"
 
-[package.metadata.rust-analyzer]
-rustc_private = true
-
-[dependencies]
+[workspace.dependencies]
 rustc_plugin = { path = "./rustc_plugin/crates/rustc_plugin" }
 rustc_utils = { path = "./rustc_plugin/crates/rustc_utils" }
 
-clap = { version = "4.4", features = ["derive"] }
-env_logger = "0.10"
-log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+
+log = "0.4"
+env_logger = "0.11"
+
+clap = { version = "4.5", features = ["derive"] }
