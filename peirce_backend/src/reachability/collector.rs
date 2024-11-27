@@ -917,8 +917,7 @@ fn visit_instance_use<'tcx>(
     }
 }
 
-/// Returns `true` if we should codegen an instance in the local crate, or returns `false` if we
-/// can just link to the upstream crate and therefore don't need a mono item.
+/// We push reachability to the limit and try to codegen as much locally as possible.
 fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) -> bool {
     let Some(def_id) = instance.def.def_id_if_not_guaranteed_local_codegen() else {
         return true;
@@ -940,13 +939,13 @@ fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) ->
             .upstream_monomorphization(tcx)
             .is_some()
     {
-        // We can link to the item in question, no instance needed in this crate.
-        return false;
+        // Compiler can link to the item in question, but we choose to monomorphize it nevertheless.
+        return true;
     }
 
     if let DefKind::Static(_) = tcx.def_kind(def_id) {
-        // We cannot monomorphize statics from upstream crates.
-        return false;
+        // Try to monomorphize statics from upstream crates.
+        return true;
     }
 
     if !tcx.is_mir_available(def_id) {
