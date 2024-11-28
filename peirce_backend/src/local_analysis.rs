@@ -33,6 +33,10 @@ pub struct CachedBody<'tcx> {
 }
 
 impl<'tcx> CachedBody<'tcx> {
+    pub fn new(body: Body<'tcx>) -> Self {
+        Self { body }
+    }
+
     /// Retrieve a body and the necessary facts for a local item.
     ///
     /// Ensure this is called early enough in the compiler so that the body has not been stolen yet.
