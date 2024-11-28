@@ -61,7 +61,7 @@ impl<'tcx, 'a, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisi
 /// calculating the necessary borrowcheck facts to store for later points-to
 /// analysis.
 ///
-/// Ensure this gets called early in the compiler before the unoptimmized mir
+/// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
 pub fn dump_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tcx>, analysis: &A) {
     let mut vis = DumpingVisitor {
@@ -110,7 +110,7 @@ pub fn load_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(
 /// HACK(Justus): `TyCtxt::output_filenames` returns a file stem of
 /// `lib<crate_name>-<hash>`, whereas `OutputFiles::with_extension` returns a file
 /// stem of `<crate_name>-<hash>`. I haven't found a clean way to get the same
-/// name in both places, so i just assume that these two will always have this
+/// name in both places, so I just assume that these two will always have this
 /// relation and prepend the `"lib"` here.
 fn intermediate_out_dir(tcx: TyCtxt, ext: &str) -> PathBuf {
     let rustc_out_file = tcx.output_filenames(()).with_extension(ext);
