@@ -1,5 +1,4 @@
 pub mod leaky_flows {
-    #[doc = "impure"]
     pub fn implicit_leak(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.
@@ -9,7 +8,6 @@ pub mod leaky_flows {
         println!("{}", variable);
     }
 
-    #[doc = "impure"]
     pub fn reassignment_leak(sensitive_arg: i32) {
         let mut variable = sensitive_arg;
         // Implicit flow.
@@ -23,7 +21,6 @@ pub mod leaky_flows {
 pub mod arc_leak {
     use std::sync::{Arc, Mutex};
 
-    #[doc = "impure"]
     pub fn arc_leak(sensitive_arg: i32) {
         let sensitive_arc = Arc::new(Mutex::new(sensitive_arg));
         let sensitive_arc_copy = sensitive_arc.clone();
@@ -33,7 +30,6 @@ pub mod arc_leak {
 }
 
 pub mod tricky_flows {
-    #[doc = "impure"]
     pub fn implicit_leak(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.
@@ -50,7 +46,6 @@ pub mod tricky_flows {
 }
 
 pub mod non_leaky_flows {
-    #[doc = "pure"]
     pub fn foo(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.

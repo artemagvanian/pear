@@ -7,26 +7,22 @@ pub mod collections;
 pub mod tests;
 
 macro_rules! redefine {
-    (<$origin_ty:ty> :: $func_ident:ident => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty, $purity:expr) => {
-        #[doc = $purity]
+    (<$origin_ty:ty> :: $func_ident:ident => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty) => {
         pub fn $func_ident($($param_ident : $param_ty),*) -> $ret_ty {
             <$origin_ty>::$func_ident($($param_ident),*)
         }
     };
-    (<$origin_ty:ty> :: $func_ident:ident<$($lt:lifetime),+> => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty, $purity:expr) => {
-        #[doc = $purity]
+    (<$origin_ty:ty> :: $func_ident:ident<$($lt:lifetime),+> => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty) => {
         pub fn $func_ident<$($lt),*>($($param_ident : $param_ty),*) -> $ret_ty {
             <$origin_ty>::$func_ident($($param_ident),*)
         }
     };
-    ($new_ident:ident, <$origin_ty:ty> :: $func_ident:ident => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty, $purity:expr) => {
-        #[doc = $purity]
+    ($new_ident:ident, <$origin_ty:ty> :: $func_ident:ident => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty) => {
         pub fn $new_ident($($param_ident : $param_ty),*) -> $ret_ty {
             <$origin_ty>::$func_ident($($param_ident),*)
         }
     };
-    ($new_ident:ident, <$origin_ty:ty> :: $func_ident:ident<$($lt:lifetime),+> => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty, $purity:expr) => {
-        #[doc = $purity]
+    ($new_ident:ident, <$origin_ty:ty> :: $func_ident:ident<$($lt:lifetime),+> => $($param_ident:ident : $param_ty:ty),* => $ret_ty:ty) => {
         pub fn $new_ident<$($lt),*>($($param_ident : $param_ty),*) -> $ret_ty {
             <$origin_ty>::$func_ident($($param_ident),*)
         }

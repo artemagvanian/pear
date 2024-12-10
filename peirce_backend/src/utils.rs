@@ -28,11 +28,12 @@ pub fn substituted_mir<'tcx>(
                 }
             }
         }
+        ty::InstanceDef::Virtual(..) | ty::InstanceDef::Intrinsic(..) => {
+            return Err("instance {instance:?} does not have callable mir".to_string());
+        }
         ty::InstanceDef::VTableShim(..)
         | ty::InstanceDef::ReifyShim(..)
-        | ty::InstanceDef::Intrinsic(..)
         | ty::InstanceDef::FnPtrShim(..)
-        | ty::InstanceDef::Virtual(..)
         | ty::InstanceDef::ClosureOnceShim { .. }
         | ty::InstanceDef::DropGlue(..)
         | ty::InstanceDef::CloneShim(..)

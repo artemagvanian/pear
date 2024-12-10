@@ -12,6 +12,7 @@ rustc_utils = { path = "../rustc_plugin/crates/rustc_utils" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+regex = { version = "1" }
 
 log = "0.4"
 env_logger = "0.11"
