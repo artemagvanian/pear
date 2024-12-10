@@ -25,10 +25,6 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
-
-use caching::dump_local_analysis_results;
-use global_analysis::GlobalAnalysis;
-use local_analysis::LocalAnalysis;
 use rustc_utils::mir::borrowck_facts;
 use std::process::Command;
 
@@ -38,8 +34,9 @@ mod local_analysis;
 mod reachability;
 mod utils;
 
-pub use global_analysis::DumpingGlobalAnalysis;
-pub use local_analysis::CachedBodyAnalysis;
+pub use caching::{dump_local_analysis_results, load_local_analysis_results}; 
+pub use global_analysis::{GlobalAnalysis, DumpingGlobalAnalysis};
+pub use local_analysis::{LocalAnalysis, CachedBodyAnalysis, CachedBody};
 pub use reachability::collect_mono_items_from;
 pub use utils::substituted_mir;
 

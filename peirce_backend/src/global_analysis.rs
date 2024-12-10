@@ -14,6 +14,8 @@ pub trait GlobalAnalysis<'tcx> {
 
 pub struct DumpingGlobalAnalysis {}
 
+/// Dumps the usage map from each entry function to a file. 
+/// Loads MIR [`Body`]s retrieved during LocalAnalysis via call to substituted_mir(). ` 
 impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
     fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
         tcx.hir().items().for_each(|item_id| {
