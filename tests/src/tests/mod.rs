@@ -6,5 +6,6 @@ pub mod leaky;
 pub mod raw_ptr;
 pub mod recursive;
 pub mod r#static;
+pub mod refine;
 pub mod structs;
 pub mod vartrack;

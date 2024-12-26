@@ -14,7 +14,7 @@ pub struct PeircePlugin;
 
 #[derive(Parser, Serialize, Deserialize)]
 pub struct PeircePluginArgs {
-    #[clap(short, long, default_value="true")]
+    #[clap(short, long, default_value = "true")]
     skip_generics: bool,
     #[clap(short, long)]
     filter: Option<String>,

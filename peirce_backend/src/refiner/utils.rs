@@ -1,6 +1,4 @@
-use rustc_hir::Unsafety;
-use rustc_middle::ty::{self, FnSig, Instance, InstanceDef, Ty, TyCtxt, TyKind};
-use rustc_target::spec::abi::Abi;
+use rustc_middle::ty::{self, FnSig, Instance, InstanceDef, Ty};
 
 pub fn is_virtual<'tcx>(instance: Instance<'tcx>) -> bool {
     matches!(instance.def, InstanceDef::Virtual(..))
@@ -12,80 +10,136 @@ pub fn is_intrinsic<'tcx>(instance: Instance<'tcx>) -> bool {
 
 /// Returns true if the type contains an inner type that is not concrete enough for the refinement
 /// purposes (e.g., a type parameter, a function pointer, or a dynamic type).
-pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
-    ty.walk().any(|ty| {
-        ty.as_type().is_some_and(|ty| {
-            matches!(
-                ty.kind(),
-                ty::Param(..) | ty::FnPtr(..) | ty::Dynamic(..) | ty::Foreign(..)
-            )
-        })
-    })
-}
+pub fn instantiation_of<'tcx>(generic: Ty<'tcx>, particular: Ty<'tcx>) -> bool {
+    let mut generic_walker = generic.walk();
+    let mut particular_walker = particular.walk();
+    loop {
+        let next_generic = generic_walker.next();
+        let next_particular = particular_walker.next();
 
-/// Normalizes a function signature for a callable type.
-pub fn normalized_fn_sig<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
-    let normalized_sig = match ty.kind() {
-        TyKind::FnDef(def_id, args) => tcx.fn_sig(*def_id).instantiate(tcx, args),
-        TyKind::FnPtr(f) => *f,
-        TyKind::Closure(.., args) => {
-            tcx.signature_unclosure(args.as_closure().sig(), Unsafety::Normal)
+        match (next_generic, next_particular) {
+            (Some(generic_arg), Some(particular_arg)) => {
+                let generic_arg = generic_arg.unpack();
+                let particular_arg = particular_arg.unpack();
+
+                match (generic_arg, particular_arg) {
+                    (
+                        ty::GenericArgKind::Type(generic_ty),
+                        ty::GenericArgKind::Type(particular_ty),
+                    ) => {
+                        if matches!(
+                            generic_ty.kind(),
+                            ty::Param(..)
+                                | ty::Foreign(..)
+                                | ty::Dynamic(..)
+                                | ty::Alias(..)
+                                | ty::FnPtr(..)
+                        ) || matches!(
+                            particular_ty.kind(),
+                            ty::Param(..)
+                                | ty::Foreign(..)
+                                | ty::Dynamic(..)
+                                | ty::Alias(..)
+                                | ty::FnPtr(..)
+                        ) {
+                            generic_walker.skip_current_subtree();
+                            particular_walker.skip_current_subtree();
+                        } else {
+                            match (generic_ty.kind(), particular_ty.kind()) {
+                                (ty::Bool, ty::Bool)
+                                | (ty::Char, ty::Char)
+                                | (ty::Int(..), ty::Int(..))
+                                | (ty::Uint(..), ty::Uint(..))
+                                | (ty::Float(..), ty::Float(..))
+                                | (ty::Str, ty::Str)
+                                | (ty::Infer(..), ty::Infer(..))
+                                | (ty::Bound(.., _), ty::Bound(.., _))
+                                | (ty::Placeholder(_), ty::Placeholder(_))
+                                | (ty::Error(_), ty::Error(_))
+                                | (ty::Never, ty::Never) => {
+                                    if generic_ty != particular_ty {
+                                        return false;
+                                    }
+                                }
+                                (ty::Tuple(_), ty::Tuple(_))
+                                | (ty::Slice(_), ty::Slice(_))
+                                | (ty::Array(_, _), ty::Array(_, _)) => {}
+                                (ty::RawPtr(tm_generic), ty::RawPtr(tm_particular)) => {
+                                    if tm_generic.mutbl != tm_particular.mutbl {
+                                        return false;
+                                    }
+                                }
+                                (
+                                    ty::Ref(_, _, mutability_generic),
+                                    ty::Ref(_, _, mutability_particular),
+                                ) => {
+                                    if mutability_generic != mutability_particular {
+                                        return false;
+                                    }
+                                }
+                                (ty::Adt(adt_def_generic, _), ty::Adt(adt_def_particular, _)) => {
+                                    if adt_def_generic != adt_def_particular {
+                                        return false;
+                                    }
+                                }
+                                (ty::FnDef(def_id_generic, _), ty::FnDef(def_id_particular, _))
+                                | (
+                                    ty::Closure(def_id_generic, _),
+                                    ty::Closure(def_id_particular, _),
+                                )
+                                | (
+                                    ty::Coroutine(def_id_generic, _),
+                                    ty::Coroutine(def_id_particular, _),
+                                )
+                                | (
+                                    ty::CoroutineWitness(def_id_generic, _),
+                                    ty::CoroutineWitness(def_id_particular, _),
+                                ) => {
+                                    if def_id_generic != def_id_particular {
+                                        return false;
+                                    }
+                                }
+                                _ => return false,
+                            }
+                        }
+                    }
+                    (
+                        ty::GenericArgKind::Lifetime(generic_region),
+                        ty::GenericArgKind::Lifetime(particular_region),
+                    ) => {
+                        assert!(generic_region.is_erased() && particular_region.is_erased());
+                    }
+                    (
+                        ty::GenericArgKind::Const(generic_const),
+                        ty::GenericArgKind::Const(particular_const),
+                    ) => {
+                        if generic_const != particular_const {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+            (None, None) => {
+                return true;
+            }
+            _ => return false,
         }
-        _ => panic!("unexpected callee type encountered when performing refinement"),
-    };
-    tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(normalized_sig))
+    }
 }
 
 /// Returns true if `particular` function signature is a potential resolution of `generic` function
 /// signature. In other words, it checks if the concrete (non-generic like) parameters of the
 /// function signatures match.
-pub fn is_resolution_of<'tcx>(
-    generic: FnSig<'tcx>,
-    particular: FnSig<'tcx>,
-    tcx: TyCtxt<'tcx>,
-) -> bool {
-    // Normalize the generic function if it is a closure shim.
-    let generic_normalized = match generic.abi {
-        Abi::Rust | Abi::C { .. } => generic,
-        Abi::RustCall => {
-            // This is hacky, but we know by construction that the function arguments would be
-            // passed as a second argument in a tupled form. For instance, see the following link:
-            // https://doc.rust-lang.org/std/ops/trait.Fn.html
-            let params = match generic.inputs()[1].kind() {
-                ty::Tuple(params) => *params,
-                _ => bug!(
-                    "encountered a non-tuple as a second argument to a function with Abi::RustCall"
-                ),
-            };
-            tcx.mk_fn_sig(
-                params,
-                generic.output(),
-                generic.c_variadic,
-                Unsafety::Normal,
-                Abi::Rust,
-            )
-        }
-        _ => bug!("unsupported ABI for refinement: {:?}", generic.abi),
-    };
-
+pub fn is_resolution_of<'tcx>(generic: FnSig<'tcx>, particular: FnSig<'tcx>) -> bool {
     // Check that the number of inputs matches to use `zip` later.
-    if generic_normalized.inputs().len() != particular.inputs().len() {
+    if generic.inputs().len() != particular.inputs().len() {
         return false;
     }
 
-    generic_normalized
+    generic
         .inputs_and_output
         .iter()
         .zip(particular.inputs_and_output.iter())
-        .all(|(superset_ty, subset_ty)| {
-            contains_non_concrete_type(superset_ty)
-                || contains_non_concrete_type(subset_ty)
-                || superset_ty == subset_ty
-        })
-}
-
-/// Resolves the type of the instance and substitutes the arguments for it.
-pub fn instance_type<'tcx>(instance: &Instance<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
-    tcx.type_of(instance.def_id())
-        .instantiate(tcx, instance.args)
+        .all(|(superset_ty, subset_ty)| instantiation_of(superset_ty, subset_ty))
 }

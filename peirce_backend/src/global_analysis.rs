@@ -4,14 +4,10 @@ use regex::Regex;
 use rustc_hir::ItemKind;
 use rustc_middle::{
     mir::mono::MonoItem,
-    ty::{self, FnSig, TyCtxt},
+    ty::{self, FnSig, Ty, TyCtxt},
 };
 
-use crate::{
-    reachability::collect_mono_items_from,
-    refiner::{contains_non_concrete_type, refine_from},
-    utils::substituted_mir,
-};
+use crate::{reachability::collect_mono_items_from, refiner::refine_from};
 
 pub trait GlobalAnalysis<'tcx> {
     fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation;
@@ -29,6 +25,19 @@ impl<'tcx> DumpingGlobalAnalysis {
             skip_generic,
         }
     }
+}
+
+/// Returns true if the type contains an inner type that is not concrete enough for the refinement
+/// purposes (e.g., a type parameter, a function pointer, or a dynamic type).
+pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
+    ty.walk().any(|ty| {
+        ty.as_type().is_some_and(|ty| {
+            matches!(
+                ty.kind(),
+                ty::Param(..) | ty::FnPtr(..) | ty::Dynamic(..) | ty::Foreign(..)
+            )
+        })
+    })
 }
 
 /// Dumps the usage map from each entry function to a file.
@@ -55,8 +64,10 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                     ty::Instance::new(def_id, ty::GenericArgs::identity_for_item(tcx, def_id));
 
                 let instance_sig: FnSig = tcx.instantiate_bound_regions_with_erased(
-                    tcx.fn_sig(instance.def_id())
-                        .instantiate(tcx, instance.args),
+                    tcx.erase_regions(
+                        tcx.fn_sig(instance.def_id())
+                            .instantiate(tcx, instance.args),
+                    ),
                 );
 
                 if self.skip_generic
@@ -70,17 +81,6 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
 
                 let (items, usage_map) =
                     collect_mono_items_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
-                for item in items.iter() {
-                    match item.item() {
-                        MonoItem::Fn(instance) => {
-                            let _body = substituted_mir(&instance, tcx).expect(
-                                "failed to retrieve substituted mir for instance {instance:?}",
-                            );
-                        }
-                        MonoItem::Static(_def_id) => {}
-                        MonoItem::GlobalAsm(_item_id) => {}
-                    }
-                }
 
                 fs::write(
                     format!("{def_path_str}.peirce.json"),

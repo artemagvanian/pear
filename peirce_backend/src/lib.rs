@@ -32,6 +32,7 @@ mod global_analysis;
 mod local_analysis;
 mod reachability;
 mod refiner;
+mod serialize;
 mod utils;
 
 pub use caching::{dump_local_analysis_results, load_local_analysis_results};
