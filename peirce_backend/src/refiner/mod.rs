@@ -1,3 +1,4 @@
+use log::{info, warn};
 use std::fs;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -5,20 +6,21 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{visit::Visitor, Body, Location, Operand, Terminator, TerminatorKind},
     ty::{
-        self, EarlyBinder, FnSig, Instance, InstanceDef, ParamEnv, Ty, TyCtxt, TyKind, TypeFoldable,
+        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, TyCtxt, TyKind,
+        TypeFoldable,
     },
 };
 use rustc_span::Span;
 use serde::Serialize;
 
-use crate::reachability::{Usage, UsedMonoItem};
+use crate::reachability::{ImplType, Usage, UsedMonoItem};
+use crate::refiner::utils::{is_instantiation_of, is_intrinsic, is_virtual};
 use crate::serialize::{
     serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
-    serialize_ty,
 };
+use crate::utils::normalized_sig;
 
 mod utils;
-use utils::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize)]
 pub enum RefinedNode<'tcx> {
@@ -34,12 +36,6 @@ pub enum RefinedNode<'tcx> {
         #[serde(serialize_with = "serialize_span")]
         span: Span,
     },
-    Ambiguous {
-        #[serde(serialize_with = "serialize_ty")]
-        fn_ty: Ty<'tcx>,
-        #[serde(serialize_with = "serialize_span")]
-        span: Span,
-    },
 }
 
 impl<'tcx> RefinedNode<'tcx> {
@@ -47,7 +43,6 @@ impl<'tcx> RefinedNode<'tcx> {
         match self {
             RefinedNode::Concrete { instance, .. } => vec![instance],
             RefinedNode::Refined { instances, .. } => instances,
-            RefinedNode::Ambiguous { .. } => vec![],
         }
     }
 }
@@ -129,10 +124,9 @@ impl<'tcx> RefinerVisitor<'tcx> {
         self.refined_usage_graph
     }
 
-    fn candidates_for_ambiguous(
-        &self,
-        ambiguous_fn_sig: FnSig<'tcx>,
-    ) -> Option<Vec<Instance<'tcx>>> {
+    /// Given a signature for a function pointer, find all indirectly collected functions that have
+    /// this signature.
+    fn candidates_for_fn_ptr(&self, ambiguous_fn_sig: FnSig<'tcx>) -> Vec<Instance<'tcx>> {
         // Check whether a reachable indirect item could be used to resolve the ambiguous one.
         let refined_candidates: Vec<Instance<'tcx>> = self
             .reachable_indirect
@@ -149,7 +143,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     | Usage::StaticClosureShim {
                         sig: indirect_fn_sig,
                     } => {
-                        if is_resolution_of(ambiguous_fn_sig, indirect_fn_sig) {
+                        if ambiguous_fn_sig == indirect_fn_sig {
                             Some(reachable_indirect.into_instance())
                         } else {
                             None
@@ -161,35 +155,95 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .collect();
 
         if refined_candidates.is_empty() {
-            None
-        } else {
-            Some(refined_candidates)
+            warn!("found no refined instances for function pointer with signature = {ambiguous_fn_sig:#?}",);
         }
+
+        refined_candidates
     }
 
+    /// Given a def_id of a virtual method, find all indirectly collected vtable items that
+    /// implement this method.
     fn candidates_for_virtual(
         &self,
-        trait_def_id: DefId,
-        vtable_pos: usize,
-    ) -> Option<Vec<Instance<'tcx>>> {
+        virtual_method_def_id: DefId,
+        virtual_args: GenericArgsRef<'tcx>,
+    ) -> Vec<Instance<'tcx>> {
         let refined_candidates: Vec<Instance<'tcx>> = self
             .reachable_indirect
             .iter()
             .filter(|reachable_indirect| match reachable_indirect.usage() {
-                Usage::VtableItem {
-                    trait_def_id: indirect_trait_def_id,
-                    vtable_pos: indirect_vtable_pos,
-                } => indirect_trait_def_id == trait_def_id && vtable_pos == indirect_vtable_pos,
+                Usage::VtableItem { impl_type, .. } => {
+                    let possible_instance = reachable_indirect.into_instance();
+                    match impl_type {
+                        ImplType::Explicit {
+                            def_id: impl_def_id,
+                        } => self
+                            .tcx
+                            .impl_item_implementor_ids(impl_def_id)
+                            .get(&virtual_method_def_id)
+                            .map(|impl_method_def_id| {
+                                *impl_method_def_id == possible_instance.def_id()
+                            })
+                            .unwrap_or(false),
+                        ImplType::Inherent => {
+                            if self.tcx.is_fn_trait(self.tcx.parent(virtual_method_def_id)) {
+                                let ty = self
+                                    .tcx
+                                    .type_of(possible_instance.def_id())
+                                    .instantiate(self.tcx, possible_instance.args);
+                                let methods_match = match ty.kind() {
+                                    ty::FnDef(..) | ty::Coroutine(..) => {
+                                        virtual_method_def_id == possible_instance.def_id()
+                                    }
+                                    ty::Closure(..) => return true,
+                                    _ => bug!(),
+                                };
+                                let args_match = virtual_args.len() == possible_instance.args.len()
+                                    && virtual_args.iter().zip(possible_instance.args.iter()).all(
+                                        |(generic_arg, concrete_arg)| match (
+                                            generic_arg.unpack(),
+                                            concrete_arg.unpack(),
+                                        ) {
+                                            (
+                                                ty::GenericArgKind::Type(generic_ty),
+                                                ty::GenericArgKind::Type(concrete_ty),
+                                            ) => is_instantiation_of(generic_ty, concrete_ty),
+                                            (
+                                                ty::GenericArgKind::Lifetime(generic_region),
+                                                ty::GenericArgKind::Lifetime(particular_region),
+                                            ) => {
+                                                assert!(
+                                                    generic_region.is_erased()
+                                                        && particular_region.is_erased()
+                                                );
+                                                true
+                                            }
+                                            (
+                                                ty::GenericArgKind::Const(generic_const),
+                                                ty::GenericArgKind::Const(particular_const),
+                                            ) => generic_const == particular_const,
+                                            _ => false,
+                                        },
+                                    );
+                                methods_match && args_match
+                            } else {
+                                virtual_method_def_id == possible_instance.def_id()
+                            }
+                        }
+                    }
+                }
                 _ => false,
             })
             .map(|used_mono_item| used_mono_item.into_instance())
             .collect();
 
         if refined_candidates.is_empty() {
-            None
-        } else {
-            Some(refined_candidates)
+            warn!(
+                "found no refined instances for a vtable method with def_id = {virtual_method_def_id:#?}, args = {virtual_args:#?}"
+            );
         }
+
+        refined_candidates
     }
 
     fn instantiate_with_current_instance<T: TypeFoldable<TyCtxt<'tcx>>>(
@@ -215,30 +269,18 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     generic_args,
                 );
                 match instance.def {
-                    InstanceDef::Virtual(method_def_id, vtable_pos) => {
-                        let trait_def_id = self
-                            .tcx
-                            .trait_of_item(method_def_id)
-                            .expect("InstanceDef::Virtual does not contain a trait method");
-                        match self.candidates_for_virtual(trait_def_id, vtable_pos) {
-                            Some(instances) => RefinedNode::Refined { instances, span },
-                            None => {
-                                RefinedNode::Ambiguous { fn_ty, span }
-                            }
-                        }
-                    }
+                    InstanceDef::Virtual(method_def_id, ..) => RefinedNode::Refined {
+                        instances: self.candidates_for_virtual(method_def_id, instance.args),
+                        span,
+                    },
                     _ => RefinedNode::Concrete { instance, span },
                 }
             }
             TyKind::FnPtr(poly_fn_sig) => {
-                let fn_sig = self
-                    .tcx
-                    .instantiate_bound_regions_with_erased(self.tcx.erase_regions(poly_fn_sig));
-                match self.candidates_for_ambiguous(fn_sig) {
-                    Some(instances) => RefinedNode::Refined { instances, span },
-                    None => {
-                        RefinedNode::Ambiguous { fn_ty, span }
-                    }
+                let fn_sig = normalized_sig(poly_fn_sig, self.tcx);
+                RefinedNode::Refined {
+                    instances: self.candidates_for_fn_ptr(fn_sig),
+                    span,
                 }
             }
             _ => self.panic_and_dump_call_stack(

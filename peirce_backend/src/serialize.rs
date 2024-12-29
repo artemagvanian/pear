@@ -2,7 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::mono::MonoItem,
-    ty::{FnSig, Instance, Ty},
+    ty::{FnSig, Instance},
 };
 use rustc_span::Span;
 use serde::Serializer;
@@ -65,13 +65,6 @@ where
     S: Serializer,
 {
     serializer.serialize_str(format!("{span:?}").as_str())
-}
-
-pub fn serialize_ty<S>(ty: &Ty, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(ty.to_string().as_str())
 }
 
 pub fn serialize_sig<S>(sig: &FnSig, serializer: S) -> Result<S::Ok, S::Error>

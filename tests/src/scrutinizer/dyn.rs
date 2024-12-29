@@ -1,4 +1,4 @@
-pub mod object_type_eraser {
+mod object_type_eraser {
     trait DynamicTrait {
         fn inc(&self, a: usize) -> usize;
     }
@@ -34,7 +34,7 @@ pub mod object_type_eraser {
     }
 }
 
-pub mod returns_impl_fn {
+mod returns_impl_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, &cl)
@@ -49,7 +49,7 @@ pub mod returns_impl_fn {
     }
 }
 
-pub mod passthrough_impl_fn {
+mod passthrough_impl_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, identity(&cl))
@@ -68,7 +68,7 @@ pub mod passthrough_impl_fn {
     }
 }
 
-pub mod returns_boxed_fn {
+mod returns_boxed_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, &cl)
@@ -83,7 +83,7 @@ pub mod returns_boxed_fn {
     }
 }
 
-pub mod returns_impl_fn_with_upvars {
+mod returns_impl_fn_with_upvars {
     fn outer(a: usize) -> usize {
         let lam = |x| x + 1;
         let cl = hof(a, &lam);
@@ -99,7 +99,7 @@ pub mod returns_impl_fn_with_upvars {
     }
 }
 
-pub mod returns_boxed_fn_with_upvars {
+mod returns_boxed_fn_with_upvars {
     fn outer(a: usize) -> usize {
         let lam = |x| x + 1;
         let cl = hof(a, &lam);

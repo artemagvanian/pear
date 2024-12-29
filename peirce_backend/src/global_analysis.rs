@@ -6,6 +6,7 @@ use rustc_middle::{
     mir::mono::MonoItem,
     ty::{self, FnSig, Ty, TyCtxt},
 };
+use rustc_span::Symbol;
 
 use crate::{reachability::collect_mono_items_from, refiner::refine_from};
 
@@ -44,11 +45,21 @@ pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
 /// Loads MIR [`Body`]s retrieved during LocalAnalysis via call to substituted_mir(). `
 impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
     fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
-        tcx.hir().items().for_each(|item_id| {
-            let hir = tcx.hir();
+        let peirce_entry_attribute = [Symbol::intern("peirce"), Symbol::intern("analysis_entry")];
+        let hir = tcx.hir();
+
+        for item_id in tcx.hir().items() {
             let item = hir.item(item_id);
             let def_id = item.owner_id.to_def_id();
             let def_path_str = tcx.def_path_str(def_id);
+
+            if tcx
+                .get_attrs_by_path(def_id, &peirce_entry_attribute)
+                .next()
+                .is_none()
+            {
+                continue;
+            }
 
             if !self
                 .filter
@@ -56,7 +67,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 .map(|filter| filter.is_match(def_path_str.as_str()))
                 .unwrap_or(true)
             {
-                return;
+                continue;
             }
 
             if let ItemKind::Fn(..) = &item.kind {
@@ -76,7 +87,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                         .iter()
                         .any(|ty| contains_non_concrete_type(ty))
                 {
-                    return;
+                    continue;
                 }
 
                 let (items, usage_map) =
@@ -97,7 +108,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 )
                 .expect("failed to write refinement results to a file");
             }
-        });
+        }
         rustc_driver::Compilation::Continue
     }
 }

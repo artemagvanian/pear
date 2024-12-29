@@ -1,4 +1,4 @@
-use crate::redefine;
+use super::redefine;
 use std::alloc::Global;
 use std::cmp::Ordering;
 use std::collections::TryReserveError;

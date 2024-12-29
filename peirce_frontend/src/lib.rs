@@ -10,6 +10,8 @@ use rustc_plugin::{CrateFilter, RustcPlugin, RustcPluginArgs, Utf8Path};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, env, process::Command};
 
+pub mod logging;
+
 pub struct PeircePlugin;
 
 #[derive(Parser, Serialize, Deserialize)]

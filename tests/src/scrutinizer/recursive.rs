@@ -1,4 +1,4 @@
-pub mod self_recursive {
+mod self_recursive {
     fn pure(a: usize) {
         if a > 0 {
             pure(a - 1);
@@ -13,7 +13,7 @@ pub mod self_recursive {
     }
 }
 
-pub mod mutually_recursive {
+mod mutually_recursive {
     fn pure_1(a: usize) {
         if a > 0 {
             pure_2(a - 1);

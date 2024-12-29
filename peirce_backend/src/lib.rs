@@ -1,8 +1,6 @@
 #![feature(rustc_private, box_patterns, min_specialization, let_chains)]
 
 #[macro_use]
-extern crate tracing;
-#[macro_use]
 extern crate rustc_middle;
 extern crate polonius_engine;
 extern crate rustc_borrowck;

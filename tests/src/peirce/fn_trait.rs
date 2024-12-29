@@ -1,4 +1,4 @@
-mod refine_fn {
+mod fn_trait {
     fn fn_1(a: usize, b: usize) -> usize {
         a + b
     }
@@ -11,6 +11,7 @@ mod refine_fn {
         func(a, b)
     }
     
+    #[peirce::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -25,7 +26,7 @@ mod refine_fn {
     }
 }
 
-mod refine_fn_mut {
+mod fn_mut_trait {
     fn fn_1(a: usize, b: usize) -> usize {
         a + b
     }
@@ -38,6 +39,7 @@ mod refine_fn_mut {
         func(a, b)
     }
     
+    #[peirce::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -55,7 +57,7 @@ mod refine_fn_mut {
     }    
 }
 
-mod refine_fn_box {
+mod boxed_fn_trait {
     fn fn_1(a: usize, b: usize) -> usize {
         a + b
     }
@@ -68,6 +70,7 @@ mod refine_fn_box {
         func(a, b)
     }
     
+    #[peirce::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -85,7 +88,7 @@ mod refine_fn_box {
     }
 }
 
-mod refine_fn_boxed_closure {
+mod boxed_closure_as_fn_trait {
     fn fn_1(a: usize, b: usize) -> usize {
         a + b
     }
@@ -98,6 +101,7 @@ mod refine_fn_boxed_closure {
         func(a, b)
     }
     
+    #[peirce::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;

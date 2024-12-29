@@ -1,4 +1,4 @@
-use crate::redefine;
+use super::redefine;
 use std::collections::hash_map::*;
 use std::collections::HashMap;
 use std::collections::TryReserveError;
@@ -27,10 +27,10 @@ redefine! { <HashMap<usize, usize>>::hasher => hashmap: &HashMap<usize, usize> =
 redefine! { <HashMap<usize, usize>>::index<'a> => hashmap: &'a HashMap<usize, usize>, key: &'a usize => &'a usize }
 redefine! { <HashMap<usize, usize>>::insert => hashmap: &mut HashMap<usize, usize>, k: usize, v: usize => Option<usize> }
 redefine! { into_iter_1, <HashMap<usize, usize>>::into_iter => hashmap: HashMap<usize, usize> => IntoIter<usize, usize> }
-pub fn into_iter_2(hashmap: &mut HashMap<usize, usize>) -> IterMut<'_, usize, usize> {
+fn into_iter_2(hashmap: &mut HashMap<usize, usize>) -> IterMut<'_, usize, usize> {
     hashmap.into_iter()
 }
-pub fn into_iter_3(hashmap: &HashMap<usize, usize>) -> Iter<'_, usize, usize> {
+fn into_iter_3(hashmap: &HashMap<usize, usize>) -> Iter<'_, usize, usize> {
     hashmap.into_iter()
 }
 redefine! { <HashMap<usize, usize>>::into_keys => hashmap: HashMap<usize, usize> => IntoKeys<usize, usize> }

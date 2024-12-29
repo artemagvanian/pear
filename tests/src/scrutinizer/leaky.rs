@@ -1,28 +1,28 @@
-pub mod print {
-    pub fn println_side_effect(left: usize, right: usize) -> usize {
+mod print {
+    fn println_side_effect(left: usize, right: usize) -> usize {
         println!("{} {}", left, right);
         left + right
     }
 }
 
-pub mod network {
+mod network {
     use std::io;
     use std::net::UdpSocket;
 
-    pub fn udp_socket_send(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
+    fn udp_socket_send(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
         socket.send(buf)
     }
 }
 
-pub mod interior {
+mod interior {
     use std::cell::RefCell;
 
-    pub fn ref_cell_mut(refcell: &RefCell<usize>) {
+    fn ref_cell_mut(refcell: &RefCell<usize>) {
         *refcell.borrow_mut() = 10;
     }
 }
 
-pub mod implicit {
+mod implicit {
     struct CustomSmartPointer {
         data: usize,
     }
@@ -33,12 +33,12 @@ pub mod implicit {
         }
     }
 
-    pub fn sneaky_drop(data: usize) {
+    fn sneaky_drop(data: usize) {
         let sp = CustomSmartPointer { data };
     }
 }
 
-pub mod adversarial {
+mod adversarial {
     use std::ptr;
 
     unsafe fn intrinsic_leaker(value: &u64, sink: &u64) {

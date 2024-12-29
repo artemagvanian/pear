@@ -84,6 +84,7 @@
 //! the trait, as we need to store pointers to these functions even if they never get called
 //! anywhere. This can be seen as a special case of taking a function reference.
 
+use log::trace;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::lang_items::LangItem;
@@ -99,12 +100,13 @@ use rustc_middle::ty::adjustment::{CustomCoerceUnsized, PointerCoercion};
 use rustc_middle::ty::layout::ValidityRequirement;
 use rustc_middle::ty::normalize_erasing_regions::NormalizationError;
 use rustc_middle::ty::{
-    self, Instance, InstanceDef, PolyFnSig, Ty, TyCtxt, TypeFoldable, TypeVisitableExt, VtblEntry,
+    self, Instance, InstanceDef, Ty, TyCtxt, TypeFoldable, TypeVisitableExt, VtblEntry,
 };
 use rustc_middle::ty::{FnSig, GenericArgs};
 use serde::Serialize;
 
 use crate::serialize::{serialize_def_id, serialize_edges, serialize_mono_item, serialize_sig};
+use crate::utils::normalized_sig;
 
 /// We collect the specifics of how each mono item is used to aid with refinement later.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize)]
@@ -141,12 +143,23 @@ pub enum Usage<'tcx> {
     VtableItem {
         #[serde(serialize_with = "serialize_def_id")]
         trait_def_id: DefId,
-        vtable_pos: usize,
+        impl_type: ImplType,
     },
     StaticClosureShim {
         #[serde(serialize_with = "serialize_sig")]
         sig: FnSig<'tcx>,
     },
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize)]
+
+/// Differentiates between methods coming from an impl block and inherent ones.
+pub enum ImplType {
+    Explicit {
+        #[serde(serialize_with = "serialize_def_id")]
+        def_id: DefId,
+    },
+    Inherent,
 }
 
 /// Mono item with usage specifics attached.
@@ -367,7 +380,7 @@ impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
     where
         T: TypeFoldable<TyCtxt<'tcx>>,
     {
-        debug!("monomorphize: self.instance={:?}", self.instance);
+        trace!("monomorphize: self.instance={:?}", self.instance);
         let maybe_mono = self
             .instance
             .try_instantiate_mir_and_normalize_erasing_regions(
@@ -385,7 +398,7 @@ impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
 
 impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
     fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: Location) {
-        debug!("visiting rvalue {:?}", *rvalue);
+        trace!("visiting rvalue {:?}", *rvalue);
 
         let span = self.body.source_info(location).span;
 
@@ -511,7 +524,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
     }
 
     fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
-        debug!("visiting terminator {:?} @ {:?}", terminator, location);
+        trace!("visiting terminator {:?} @ {:?}", terminator, location);
         let tcx = self.tcx;
         let push_mono_lang_item = |this: &mut Self, lang_item: LangItem, usage: Usage<'tcx>| {
             let instance = Instance::mono(tcx, tcx.require_lang_item(lang_item, None));
@@ -684,9 +697,10 @@ fn visit_instance_use<'tcx>(
     output: &mut UsedMonoItems<'tcx>,
     usage: Usage<'tcx>,
 ) {
-    debug!(
+    trace!(
         "visit_item_use({:?}, is_direct_call={:?})",
-        instance, is_direct_call
+        instance,
+        is_direct_call
     );
 
     // The intrinsics assert_inhabited, assert_zero_valid, and assert_mem_uninitialized_valid will
@@ -860,8 +874,7 @@ fn create_mono_items_for_vtable_methods<'tcx>(
             let entries = tcx.vtable_entries(poly_trait_ref);
             let methods = entries
                 .iter()
-                .enumerate()
-                .filter_map(|(i, entry)| match entry {
+                .filter_map(|entry| match entry {
                     VtblEntry::MetadataDropInPlace
                     | VtblEntry::MetadataSize
                     | VtblEntry::MetadataAlign
@@ -870,20 +883,26 @@ fn create_mono_items_for_vtable_methods<'tcx>(
                         // all super trait items already covered, so skip them.
                         None
                     }
-                    VtblEntry::Method(instance) => Some((i, *instance)),
+                    VtblEntry::Method(instance) => Some(*instance),
                 })
-                .map(|(i, item)| {
-                    let trait_def_id = tcx
-                        .impl_of_method(item.def_id())
-                        .and_then(|impl_def_id| tcx.trait_id_of_impl(impl_def_id))
-                        .unwrap_or(poly_trait_ref.def_id());
-                    create_fn_mono_item(
-                        item,
+                .map(|item| {
+                    let usage = {
+                        // Record def_id of the trait where the method is coming from.
+                        let trait_def_id = tcx
+                            .impl_of_method(item.def_id())
+                            .and_then(|impl_id| tcx.trait_id_of_impl(impl_id))
+                            .unwrap_or(poly_trait_ref.def_id());
+                        // Record def_id of the impl block where the method is coming from.s
+                        let impl_type = tcx
+                            .impl_of_method(item.def_id())
+                            .map(|impl_id| ImplType::Explicit { def_id: impl_id })
+                            .unwrap_or(ImplType::Inherent);
                         Usage::VtableItem {
                             trait_def_id,
-                            vtable_pos: i,
-                        },
-                    )
+                            impl_type,
+                        }
+                    };
+                    create_fn_mono_item(item, usage)
                 });
             output.extend(methods);
         }
@@ -1011,8 +1030,4 @@ fn custom_coerce_unsize_info<'tcx>(
             panic!("invalid `CoerceUnsized` impl_source: {:?}", impl_source);
         }
     }
-}
-
-fn normalized_sig<'tcx>(poly_fn_sig: PolyFnSig<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
-    tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(poly_fn_sig))
 }

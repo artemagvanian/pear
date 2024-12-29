@@ -1,4 +1,4 @@
-pub mod mutable_static {
+mod mutable_static {
     static mut GLOBAL_VEC: Vec<u32> = vec![];
 
     fn leak_into_static(a: u32) {
@@ -8,7 +8,7 @@ pub mod mutable_static {
     }
 }
 
-pub mod mutation_from_static {
+mod mutation_from_static {
     struct PureIncrementer;
 
     impl PureIncrementer {

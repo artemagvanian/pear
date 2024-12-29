@@ -1,7 +1,7 @@
 use rustc_hir::def::DefKind;
 use rustc_middle::{
     mir::Body,
-    ty::{self, Instance, TyCtxt},
+    ty::{self, FnSig, Instance, PolyFnSig, TyCtxt},
 };
 
 use crate::{caching::load_local_analysis_results, local_analysis::CachedBodyAnalysis};
@@ -47,4 +47,8 @@ pub fn substituted_mir<'tcx>(
             ty::EarlyBinder::bind(instance_body.clone()),
         )
         .unwrap_or(instance_body))
+}
+
+pub fn normalized_sig<'tcx>(poly_fn_sig: PolyFnSig<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
+    tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(poly_fn_sig))
 }
