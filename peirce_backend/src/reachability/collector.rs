@@ -106,7 +106,7 @@ use rustc_middle::ty::{FnSig, GenericArgs};
 use serde::Serialize;
 
 use crate::serialize::{serialize_def_id, serialize_edges, serialize_mono_item, serialize_sig};
-use crate::utils::normalized_sig;
+use crate::utils::{erase_regions_in_sig, fn_trait_method_sig};
 
 /// We collect the specifics of how each mono item is used to aid with refinement later.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize)]
@@ -144,6 +144,10 @@ pub enum Usage<'tcx> {
         #[serde(serialize_with = "serialize_def_id")]
         trait_def_id: DefId,
         impl_type: ImplType,
+    },
+    FnTraitItem {
+        #[serde(serialize_with = "serialize_sig")]
+        sig: FnSig<'tcx>,
     },
     StaticClosureShim {
         #[serde(serialize_with = "serialize_sig")]
@@ -190,13 +194,14 @@ impl<'tcx> UsedMonoItem<'tcx> {
             self.usage,
             Usage::StaticFn { .. }
                 | Usage::VtableItem { .. }
+                | Usage::FnTraitItem { .. }
                 | Usage::FnPtr { .. }
                 | Usage::StaticClosureShim { .. }
         )
     }
 
     /// Resolves a callable instance from a mono item if one exists.
-    pub fn into_instance(&self) -> Instance<'tcx> {
+    pub fn expect_instance(&self) -> Instance<'tcx> {
         match self.item {
             MonoItem::Fn(instance) => instance,
             MonoItem::Static(..) | MonoItem::GlobalAsm(..) => bug!(),
@@ -446,7 +451,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                     return;
                 };
                 let sig = match fn_ty.kind() {
-                    ty::FnDef(def_id, args) => normalized_sig(
+                    ty::FnDef(def_id, args) => erase_regions_in_sig(
                         self.tcx.fn_sig(def_id).instantiate(self.tcx, args),
                         self.tcx,
                     ),
@@ -479,7 +484,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                             ty::ClosureKind::FnOnce,
                         )
                         .expect("failed to normalize and resolve closure during codegen");
-                        let sig = normalized_sig(
+                        let sig = erase_regions_in_sig(
                             self.tcx
                                 .signature_unclosure(args.as_closure().sig(), Unsafety::Normal),
                             self.tcx,
@@ -541,7 +546,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                     && matches!(self.instance.def, InstanceDef::ClosureOnceShim { .. });
                 let usage = if is_static_closure_shim {
                     let sig = match self.instance.args[0].as_type().unwrap().kind() {
-                        ty::Closure(_, args) => normalized_sig(
+                        ty::Closure(_, args) => erase_regions_in_sig(
                             self.tcx
                                 .signature_unclosure(args.as_closure().sig(), Unsafety::Normal),
                             self.tcx,
@@ -892,14 +897,21 @@ fn create_mono_items_for_vtable_methods<'tcx>(
                             .impl_of_method(item.def_id())
                             .and_then(|impl_id| tcx.trait_id_of_impl(impl_id))
                             .unwrap_or(poly_trait_ref.def_id());
-                        // Record def_id of the impl block where the method is coming from.s
-                        let impl_type = tcx
-                            .impl_of_method(item.def_id())
-                            .map(|impl_id| ImplType::Explicit { def_id: impl_id })
-                            .unwrap_or(ImplType::Inherent);
-                        Usage::VtableItem {
-                            trait_def_id,
-                            impl_type,
+                        if tcx.is_fn_trait(trait_def_id) {
+                            // Need to record function signature of the Fn-like trait implementor.
+                            Usage::FnTraitItem {
+                                sig: fn_trait_method_sig(item.def_id(), item.args, tcx),
+                            }
+                        } else {
+                            // Record def_id of the impl block where the method is coming from.
+                            let impl_type = tcx
+                                .impl_of_method(item.def_id())
+                                .map(|impl_id| ImplType::Explicit { def_id: impl_id })
+                                .unwrap_or(ImplType::Inherent);
+                            Usage::VtableItem {
+                                trait_def_id,
+                                impl_type,
+                            }
                         }
                     };
                     create_fn_mono_item(item, usage)
@@ -937,7 +949,7 @@ fn collect_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId, output: &mut UsedMo
         }
         GlobalAlloc::Function(fn_instance) => {
             trace!("collecting {:?} with {:#?}", alloc_id, fn_instance);
-            let sig = normalized_sig(
+            let sig = erase_regions_in_sig(
                 tcx.fn_sig(fn_instance.def_id())
                     .instantiate(tcx, fn_instance.args),
                 tcx,

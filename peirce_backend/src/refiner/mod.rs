@@ -14,11 +14,14 @@ use rustc_span::Span;
 use serde::Serialize;
 
 use crate::reachability::{ImplType, Usage, UsedMonoItem};
-use crate::refiner::utils::{is_intrinsic, is_virtual};
 use crate::serialize::{
     serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
 };
-use crate::utils::normalized_sig;
+use crate::utils::erase_regions_in_sig;
+use crate::{
+    refiner::utils::{is_intrinsic, is_virtual},
+    utils::fn_trait_method_sig,
+};
 
 mod utils;
 
@@ -144,7 +147,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                         sig: indirect_fn_sig,
                     } => {
                         if ambiguous_fn_sig == indirect_fn_sig {
-                            Some(reachable_indirect.into_instance())
+                            Some(reachable_indirect.expect_instance())
                         } else {
                             None
                         }
@@ -161,9 +164,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
         refined_candidates
     }
 
-    /// Given a def_id of a virtual method, find all indirectly collected vtable items that
-    /// implement this method.
-    fn candidates_for_virtual(
+    fn candidates_for_vtable_call(
         &self,
         virtual_method_def_id: DefId,
         virtual_args: GenericArgsRef<'tcx>,
@@ -173,7 +174,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .iter()
             .filter(|reachable_indirect| match reachable_indirect.usage() {
                 Usage::VtableItem { impl_type, .. } => {
-                    let possible_instance = reachable_indirect.into_instance();
+                    let possible_instance = reachable_indirect.expect_instance();
                     match impl_type {
                         ImplType::Explicit {
                             def_id: impl_def_id,
@@ -185,28 +186,12 @@ impl<'tcx> RefinerVisitor<'tcx> {
                                 *impl_method_def_id == possible_instance.def_id()
                             })
                             .unwrap_or(false),
-                        ImplType::Inherent => {
-                            if self.tcx.is_fn_trait(self.tcx.parent(virtual_method_def_id)) {
-                                let ty = self
-                                    .tcx
-                                    .type_of(possible_instance.def_id())
-                                    .instantiate(self.tcx, possible_instance.args);
-                                match ty.kind() {
-                                    ty::FnDef(..) | ty::Coroutine(..) => {
-                                        virtual_method_def_id == possible_instance.def_id()
-                                    }
-                                    ty::Closure(..) => return true,
-                                    _ => bug!(),
-                                }
-                            } else {
-                                virtual_method_def_id == possible_instance.def_id()
-                            }
-                        }
+                        ImplType::Inherent => virtual_method_def_id == possible_instance.def_id(),
                     }
                 }
                 _ => false,
             })
-            .map(|used_mono_item| used_mono_item.into_instance())
+            .map(|used_mono_item| used_mono_item.expect_instance())
             .collect();
 
         if refined_candidates.is_empty() {
@@ -216,6 +201,45 @@ impl<'tcx> RefinerVisitor<'tcx> {
         }
 
         refined_candidates
+    }
+
+    fn candidates_for_fn_trait_call(
+        &self,
+        virtual_method_def_id: DefId,
+        virtual_args: GenericArgsRef<'tcx>,
+    ) -> Vec<Instance<'tcx>> {
+        let indirect_sig = fn_trait_method_sig(virtual_method_def_id, virtual_args, self.tcx);
+        let refined_candidates: Vec<Instance<'tcx>> = self
+            .reachable_indirect
+            .iter()
+            .filter(|reachable_indirect| match reachable_indirect.usage() {
+                Usage::FnTraitItem { sig } => indirect_sig == sig,
+                _ => false,
+            })
+            .map(|used_mono_item| used_mono_item.expect_instance())
+            .collect();
+
+        if refined_candidates.is_empty() {
+            warn!(
+                "found no refined instances for a vtable method with def_id = {virtual_method_def_id:#?}, args = {virtual_args:#?}"
+            );
+        }
+
+        refined_candidates
+    }
+
+    /// Given a def_id of a virtual method, find all indirectly collected vtable items that
+    /// implement this method.
+    fn candidates_for_virtual(
+        &self,
+        virtual_method_def_id: DefId,
+        virtual_args: GenericArgsRef<'tcx>,
+    ) -> Vec<Instance<'tcx>> {
+        if self.tcx.is_fn_trait(self.tcx.parent(virtual_method_def_id)) {
+            self.candidates_for_fn_trait_call(virtual_method_def_id, virtual_args)
+        } else {
+            self.candidates_for_vtable_call(virtual_method_def_id, virtual_args)
+        }
     }
 
     fn instantiate_with_current_instance<T: TypeFoldable<TyCtxt<'tcx>>>(
@@ -249,7 +273,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                 }
             }
             TyKind::FnPtr(poly_fn_sig) => {
-                let fn_sig = normalized_sig(poly_fn_sig, self.tcx);
+                let fn_sig = erase_regions_in_sig(poly_fn_sig, self.tcx);
                 RefinedNode::Refined {
                     instances: self.candidates_for_fn_ptr(fn_sig),
                     span,
