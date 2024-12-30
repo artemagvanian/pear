@@ -1,4 +1,4 @@
-use log::{info, warn};
+use log::warn;
 use std::fs;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -14,7 +14,7 @@ use rustc_span::Span;
 use serde::Serialize;
 
 use crate::reachability::{ImplType, Usage, UsedMonoItem};
-use crate::refiner::utils::{is_instantiation_of, is_intrinsic, is_virtual};
+use crate::refiner::utils::{is_intrinsic, is_virtual};
 use crate::serialize::{
     serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
 };
@@ -191,41 +191,13 @@ impl<'tcx> RefinerVisitor<'tcx> {
                                     .tcx
                                     .type_of(possible_instance.def_id())
                                     .instantiate(self.tcx, possible_instance.args);
-                                let methods_match = match ty.kind() {
+                                match ty.kind() {
                                     ty::FnDef(..) | ty::Coroutine(..) => {
                                         virtual_method_def_id == possible_instance.def_id()
                                     }
                                     ty::Closure(..) => return true,
                                     _ => bug!(),
-                                };
-                                let args_match = virtual_args.len() == possible_instance.args.len()
-                                    && virtual_args.iter().zip(possible_instance.args.iter()).all(
-                                        |(generic_arg, concrete_arg)| match (
-                                            generic_arg.unpack(),
-                                            concrete_arg.unpack(),
-                                        ) {
-                                            (
-                                                ty::GenericArgKind::Type(generic_ty),
-                                                ty::GenericArgKind::Type(concrete_ty),
-                                            ) => is_instantiation_of(generic_ty, concrete_ty),
-                                            (
-                                                ty::GenericArgKind::Lifetime(generic_region),
-                                                ty::GenericArgKind::Lifetime(particular_region),
-                                            ) => {
-                                                assert!(
-                                                    generic_region.is_erased()
-                                                        && particular_region.is_erased()
-                                                );
-                                                true
-                                            }
-                                            (
-                                                ty::GenericArgKind::Const(generic_const),
-                                                ty::GenericArgKind::Const(particular_const),
-                                            ) => generic_const == particular_const,
-                                            _ => false,
-                                        },
-                                    );
-                                methods_match && args_match
+                                }
                             } else {
                                 virtual_method_def_id == possible_instance.def_id()
                             }
