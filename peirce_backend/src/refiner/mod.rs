@@ -1,5 +1,6 @@
 use log::warn;
 use std::fs;
+use utils::fn_sig_eq_with_subtyping;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -146,7 +147,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     | Usage::StaticClosureShim {
                         sig: indirect_fn_sig,
                     } => {
-                        if ambiguous_fn_sig == indirect_fn_sig {
+                        if fn_sig_eq_with_subtyping(ambiguous_fn_sig, indirect_fn_sig) {
                             Some(reachable_indirect.expect_instance())
                         } else {
                             None
