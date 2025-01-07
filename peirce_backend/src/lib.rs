@@ -37,7 +37,7 @@ pub use caching::{dump_local_analysis_results, load_local_analysis_results};
 pub use global_analysis::{DumpingGlobalAnalysis, GlobalAnalysis};
 pub use local_analysis::{CachedBody, CachedBodyAnalysis, LocalAnalysis};
 pub use reachability::{collect_mono_items_from, Usage, UsedMonoItem};
-pub use refiner::refine_from;
+pub use refiner::{refine_from, GraphPath};
 pub use utils::substituted_mir;
 
 fn get_default_rustc_target() -> Result<String, String> {

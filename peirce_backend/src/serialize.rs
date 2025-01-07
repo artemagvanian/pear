@@ -1,10 +1,12 @@
+use std::collections::LinkedList;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::mono::MonoItem,
     ty::{FnSig, Instance},
 };
-use rustc_span::Span;
+use rustc_span::{source_map::Spanned, Span};
 use serde::Serializer;
 
 use crate::{reachability::UsedMonoItem, refiner::RefinedNode};
@@ -33,6 +35,19 @@ where
     serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
 }
 
+pub fn serialize_graph_path<'tcx, S>(
+    path: &LinkedList<Spanned<Instance<'tcx>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_seq(
+        path.iter()
+            .map(|path_item| (path_item.node.to_string(), format!("{:?}", path_item.span))),
+    )
+}
+
 pub fn serialize_refined_edges<'tcx, S>(
     edges: &FxHashMap<Instance<'tcx>, FxHashSet<RefinedNode<'tcx>>>,
     serializer: S,
@@ -41,6 +56,23 @@ where
     S: Serializer,
 {
     serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
+}
+
+pub fn serialize_refined_backward_edges<'tcx, S>(
+    edges: &FxHashMap<RefinedNode<'tcx>, FxHashSet<Instance<'tcx>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_map(edges.iter().map(|(k, v)| {
+        (
+            k,
+            v.into_iter()
+                .map(|instance| instance.to_string())
+                .collect::<Vec<String>>(),
+        )
+    }))
 }
 
 pub fn serialize_instance<S>(instance: &Instance, serializer: S) -> Result<S::Ok, S::Error>

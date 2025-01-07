@@ -1,5 +1,5 @@
 use log::warn;
-use std::fs;
+use std::{collections::LinkedList, fs, ops::Deref};
 use utils::fn_sig_eq_with_subtyping;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -11,12 +11,16 @@ use rustc_middle::{
         TypeFoldable,
     },
 };
-use rustc_span::Span;
+use rustc_span::{
+    source_map::{respan, Spanned},
+    Span,
+};
 use serde::Serialize;
 
 use crate::reachability::{ImplType, Usage, UsedMonoItem};
 use crate::serialize::{
-    serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
+    serialize_graph_path, serialize_instance, serialize_instance_vec,
+    serialize_refined_backward_edges, serialize_refined_edges, serialize_span,
 };
 use crate::utils::erase_regions_in_sig;
 use crate::{
@@ -43,10 +47,16 @@ pub enum RefinedNode<'tcx> {
 }
 
 impl<'tcx> RefinedNode<'tcx> {
-    pub fn into_vec(self) -> Vec<Instance<'tcx>> {
+    pub fn instances(&self) -> Vec<Instance<'tcx>> {
         match self {
-            RefinedNode::Concrete { instance, .. } => vec![instance],
-            RefinedNode::Refined { instances, .. } => instances,
+            RefinedNode::Concrete { instance, .. } => vec![instance.clone()],
+            RefinedNode::Refined { instances, .. } => instances.clone(),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Concrete { span, .. } | Self::Refined { span, .. } => *span,
         }
     }
 }
@@ -56,20 +66,119 @@ pub struct RefinedUsageGraph<'tcx> {
     // Maps every instance to the instances used by it.
     #[serde(serialize_with = "serialize_refined_edges")]
     forward_edges: FxHashMap<Instance<'tcx>, FxHashSet<RefinedNode<'tcx>>>,
+
+    #[serde(serialize_with = "serialize_refined_backward_edges")]
+    backward_edges: FxHashMap<RefinedNode<'tcx>, FxHashSet<Instance<'tcx>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphPath<'tcx> {
+    #[serde(serialize_with = "serialize_graph_path")]
+    path: LinkedList<Spanned<Instance<'tcx>>>,
+}
+
+impl<'tcx> GraphPath<'tcx> {
+    pub fn new() -> Self {
+        Self {
+            path: LinkedList::new(),
+        }
+    }
+
+    pub fn append_node(&self, node: Spanned<Instance<'tcx>>) -> Self {
+        let mut cloned_path = self.path.clone();
+        cloned_path.push_back(node);
+        Self { path: cloned_path }
+    }
+
+    pub fn prepend_node(&self, node: Spanned<Instance<'tcx>>) -> Self {
+        let mut cloned_path = self.path.clone();
+        cloned_path.push_front(node);
+        Self { path: cloned_path }
+    }
+}
+
+impl<'tcx> Deref for GraphPath<'tcx> {
+    type Target = LinkedList<Spanned<Instance<'tcx>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.path
+    }
 }
 
 impl<'tcx> RefinedUsageGraph<'tcx> {
     fn new() -> Self {
         Self {
             forward_edges: FxHashMap::default(),
+            backward_edges: FxHashMap::default(),
         }
     }
 
-    fn add_edge(&mut self, from: Instance<'tcx>, to: &RefinedNode<'tcx>) {
+    fn add_edge(&mut self, from: &Instance<'tcx>, to: &RefinedNode<'tcx>) {
         self.forward_edges
-            .entry(from)
+            .entry(from.clone())
             .or_default()
             .insert(to.clone());
+
+        self.backward_edges
+            .entry(to.clone())
+            .or_default()
+            .insert(from.clone());
+    }
+
+    pub fn find_paths_to(
+        &self,
+        from: Instance<'tcx>,
+        to: Instance<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Vec<GraphPath<'tcx>> {
+        self.find_paths_to_rec(GraphPath::new(), from, to, tcx)
+    }
+
+    fn find_paths_to_rec(
+        &self,
+        partial_path: GraphPath<'tcx>,
+        from: Instance<'tcx>,
+        to: Instance<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Vec<GraphPath<'tcx>> {
+        if from == to {
+            vec![partial_path]
+        } else {
+            let refined_nodes_for_node: Vec<RefinedNode<'tcx>> = self
+                .backward_edges
+                .keys()
+                .filter(|refined_node| refined_node.instances().contains(&to))
+                .cloned()
+                .collect();
+
+            let parents: Vec<Spanned<Instance<'tcx>>> = refined_nodes_for_node
+                .into_iter()
+                .flat_map(|refined_node| {
+                    self.backward_edges
+                        .get(&refined_node)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(move |instance| respan(refined_node.span(), instance))
+                })
+                .collect();
+
+            parents
+                .into_iter()
+                .flat_map(|parent| {
+                    if partial_path
+                        .iter()
+                        .find(|path_item| path_item.node == parent.node)
+                        .is_none()
+                    {
+                        let new_partial_path = partial_path.prepend_node(respan(parent.span, to));
+                        self.find_paths_to_rec(new_partial_path, from, parent.node, tcx)
+                    } else {
+                        vec![]
+                    }
+                })
+                .collect()
+        }
     }
 }
 
@@ -297,9 +406,9 @@ impl<'tcx> RefinerVisitor<'tcx> {
 
         // Add the edge to the refined graph.
         self.refined_usage_graph
-            .add_edge(self.current_instance, &refined);
+            .add_edge(&self.current_instance, &refined);
 
-        for callee in refined.into_vec() {
+        for callee in refined.instances() {
             // Resolved callee should not be virtual.
             if is_virtual(callee) {
                 self.panic_and_dump_call_stack(
