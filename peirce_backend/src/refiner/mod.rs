@@ -1,5 +1,5 @@
 use log::warn;
-use std::{collections::LinkedList, fs, ops::Deref};
+use std::fs;
 use utils::fn_sig_eq_with_subtyping;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -11,16 +11,13 @@ use rustc_middle::{
         TypeFoldable,
     },
 };
-use rustc_span::{
-    source_map::{respan, Spanned},
-    Span,
-};
+use rustc_span::Span;
 use serde::Serialize;
 
 use crate::reachability::{ImplType, Usage, UsedMonoItem};
 use crate::serialize::{
-    serialize_graph_path, serialize_instance, serialize_instance_vec,
-    serialize_refined_backward_edges, serialize_refined_edges, serialize_span,
+    serialize_instance, serialize_instance_vec, serialize_refined_backward_edges,
+    serialize_refined_edges, serialize_span,
 };
 use crate::utils::erase_regions_in_sig;
 use crate::{
@@ -59,6 +56,43 @@ impl<'tcx> RefinedNode<'tcx> {
             Self::Concrete { span, .. } | Self::Refined { span, .. } => *span,
         }
     }
+
+    pub fn is_refined(&self) -> bool {
+        matches!(self, RefinedNode::Refined { .. })
+    }
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub struct TaintedNode<'tcx> {
+    node: Instance<'tcx>,
+    span: Span,
+    taint: bool,
+}
+
+impl<'tcx> TaintedNode<'tcx> {
+    pub fn new(node: Instance<'tcx>, span: Span, taint: bool) -> Self {
+        Self { node, span, taint }
+    }
+
+    pub fn retaint(&self, new_taint: bool) -> Self {
+        Self {
+            node: self.node,
+            span: self.span,
+            taint: new_taint,
+        }
+    }
+
+    pub fn is_tainted(&self) -> bool {
+        self.taint
+    }
+
+    pub fn node(&self) -> Instance<'tcx> {
+        self.node
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -69,40 +103,6 @@ pub struct RefinedUsageGraph<'tcx> {
 
     #[serde(serialize_with = "serialize_refined_backward_edges")]
     backward_edges: FxHashMap<RefinedNode<'tcx>, FxHashSet<Instance<'tcx>>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GraphPath<'tcx> {
-    #[serde(serialize_with = "serialize_graph_path")]
-    path: LinkedList<Spanned<Instance<'tcx>>>,
-}
-
-impl<'tcx> GraphPath<'tcx> {
-    pub fn new() -> Self {
-        Self {
-            path: LinkedList::new(),
-        }
-    }
-
-    pub fn append_node(&self, node: Spanned<Instance<'tcx>>) -> Self {
-        let mut cloned_path = self.path.clone();
-        cloned_path.push_back(node);
-        Self { path: cloned_path }
-    }
-
-    pub fn prepend_node(&self, node: Spanned<Instance<'tcx>>) -> Self {
-        let mut cloned_path = self.path.clone();
-        cloned_path.push_front(node);
-        Self { path: cloned_path }
-    }
-}
-
-impl<'tcx> Deref for GraphPath<'tcx> {
-    type Target = LinkedList<Spanned<Instance<'tcx>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
 }
 
 impl<'tcx> RefinedUsageGraph<'tcx> {
@@ -125,59 +125,117 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             .insert(from.clone());
     }
 
-    pub fn find_paths_to(
-        &self,
-        from: Instance<'tcx>,
-        to: Instance<'tcx>,
-        tcx: TyCtxt<'tcx>,
-    ) -> Vec<GraphPath<'tcx>> {
-        self.find_paths_to_rec(GraphPath::new(), from, to, tcx)
+    pub fn instances(&self) -> FxHashSet<Instance<'tcx>> {
+        let mut instances = FxHashSet::default();
+        for (from, to) in self.forward_edges.iter() {
+            instances.insert(from.clone());
+            instances.extend(to.iter().flat_map(|refined_node| refined_node.instances()));
+        }
+        instances
     }
 
-    fn find_paths_to_rec(
+    pub fn find_reachable_edge_local_instances(
         &self,
-        partial_path: GraphPath<'tcx>,
-        from: Instance<'tcx>,
-        to: Instance<'tcx>,
+        instance: Instance<'tcx>,
+        filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
-    ) -> Vec<GraphPath<'tcx>> {
-        if from == to {
-            vec![partial_path]
-        } else {
-            let refined_nodes_for_node: Vec<RefinedNode<'tcx>> = self
-                .backward_edges
-                .keys()
-                .filter(|refined_node| refined_node.instances().contains(&to))
-                .cloned()
-                .collect();
+    ) -> Vec<TaintedNode<'tcx>> {
+        // Precalculate the inverse of the backward edges.
+        let mut tainted_parents: FxHashMap<Instance<'tcx>, Vec<TaintedNode<'tcx>>> =
+            FxHashMap::default();
+        for (refined_node, instances) in self.backward_edges.iter() {
+            for child in refined_node.instances() {
+                for parent in instances {
+                    tainted_parents
+                        .entry(child.clone())
+                        .or_default()
+                        // .push(respan(refined_node.span(), parent.clone()));
+                        .push(TaintedNode::new(
+                            parent.clone(),
+                            refined_node.span(),
+                            refined_node.is_refined(),
+                        ));
+                }
+            }
+        }
 
-            let parents: Vec<Spanned<Instance<'tcx>>> = refined_nodes_for_node
-                .into_iter()
-                .flat_map(|refined_node| {
-                    self.backward_edges
-                        .get(&refined_node)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(move |instance| respan(refined_node.span(), instance))
-                })
-                .collect();
+        let mut result = vec![];
+        let mut stack = vec![];
+        let mut visited = FxHashSet::default();
+        self.find_reachable_edge_local_instances_rec(
+            instance,
+            &filter,
+            tcx,
+            false,
+            &tainted_parents,
+            &mut stack,
+            &mut result,
+            &mut visited,
+            None,
+        );
 
-            parents
-                .into_iter()
-                .flat_map(|parent| {
-                    if partial_path
-                        .iter()
-                        .find(|path_item| path_item.node == parent.node)
-                        .is_none()
-                    {
-                        let new_partial_path = partial_path.prepend_node(respan(parent.span, to));
-                        self.find_paths_to_rec(new_partial_path, from, parent.node, tcx)
-                    } else {
-                        vec![]
-                    }
-                })
-                .collect()
+        result
+    }
+
+    fn find_reachable_edge_local_instances_rec(
+        &self,
+        instance: Instance<'tcx>,
+        filter: &Vec<String>,
+        tcx: TyCtxt<'tcx>,
+        instance_tainted: bool,
+        tainted_parents: &FxHashMap<Instance<'tcx>, Vec<TaintedNode<'tcx>>>,
+        stack: &mut Vec<Instance<'tcx>>,
+        result: &mut Vec<TaintedNode<'tcx>>,
+        visited: &mut FxHashSet<(Instance<'tcx>, bool, Option<TaintedNode<'tcx>>)>,
+        crate_edge: Option<TaintedNode<'tcx>>,
+    ) {
+        if visited.contains(&(instance, instance_tainted, crate_edge)) {
+            return;
+        }
+        visited.insert((instance, instance_tainted, crate_edge));
+
+        if filter.iter().any(|filtered_item| {
+            tcx.crate_name(instance.def_id().krate)
+                .to_string()
+                .contains(filtered_item)
+        }) {
+            return;
+        }
+
+        let parents: Vec<TaintedNode<'tcx>> =
+            tainted_parents.get(&instance).cloned().unwrap_or(vec![]);
+
+        if parents.is_empty() {
+            match crate_edge {
+                Some(tainted_node) => result.push(tainted_node.retaint(instance_tainted)),
+                _ => {}
+            }
+        }
+
+        for parent in parents {
+            let crate_edge = crate_edge.or_else(|| {
+                if parent.node.def_id().is_local() {
+                    Some(parent)
+                } else {
+                    None
+                }
+            });
+
+            if !stack.contains(&parent.node) {
+                stack.push(parent.node);
+                self.find_reachable_edge_local_instances_rec(
+                    parent.node,
+                    filter,
+                    tcx,
+                    instance_tainted || parent.is_tainted(),
+                    tainted_parents,
+                    stack,
+                    result,
+                    visited,
+                    crate_edge,
+                );
+                stack.pop();
+            }
         }
     }
 }

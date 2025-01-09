@@ -1,12 +1,10 @@
-use std::collections::LinkedList;
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::mono::MonoItem,
     ty::{FnSig, Instance},
 };
-use rustc_span::{source_map::Spanned, Span};
+use rustc_span::Span;
 use serde::Serializer;
 
 use crate::{reachability::UsedMonoItem, refiner::RefinedNode};
@@ -33,19 +31,6 @@ where
     S: Serializer,
 {
     serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
-}
-
-pub fn serialize_graph_path<'tcx, S>(
-    path: &LinkedList<Spanned<Instance<'tcx>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.collect_seq(
-        path.iter()
-            .map(|path_item| (path_item.node.to_string(), format!("{:?}", path_item.span))),
-    )
 }
 
 pub fn serialize_refined_edges<'tcx, S>(
