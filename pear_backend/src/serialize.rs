@@ -43,23 +43,6 @@ where
     serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
 }
 
-pub fn serialize_refined_backward_edges<'tcx, S>(
-    edges: &FxHashMap<RefinedNode<'tcx>, FxHashSet<Instance<'tcx>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.collect_map(edges.iter().map(|(k, v)| {
-        (
-            k,
-            v.into_iter()
-                .map(|instance| instance.to_string())
-                .collect::<Vec<String>>(),
-        )
-    }))
-}
-
 pub fn serialize_instance<S>(instance: &Instance, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,

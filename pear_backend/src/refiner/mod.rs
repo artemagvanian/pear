@@ -16,8 +16,7 @@ use serde::Serialize;
 
 use crate::reachability::{ImplType, Usage, UsedMonoItem};
 use crate::serialize::{
-    serialize_instance, serialize_instance_vec, serialize_refined_backward_edges,
-    serialize_refined_edges, serialize_span,
+    serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
 };
 use crate::utils::erase_regions_in_sig;
 use crate::{
@@ -101,7 +100,7 @@ pub struct RefinedUsageGraph<'tcx> {
     #[serde(serialize_with = "serialize_refined_edges")]
     forward_edges: FxHashMap<Instance<'tcx>, FxHashSet<RefinedNode<'tcx>>>,
 
-    #[serde(serialize_with = "serialize_refined_backward_edges")]
+    #[serde(skip_serializing)]
     backward_edges: FxHashMap<RefinedNode<'tcx>, FxHashSet<Instance<'tcx>>>,
 }
 
