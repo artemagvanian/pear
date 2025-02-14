@@ -96,6 +96,9 @@ impl<'tcx> TaintedNode<'tcx> {
 
 #[derive(Debug, Serialize)]
 pub struct RefinedUsageGraph<'tcx> {
+    #[serde(serialize_with = "serialize_instance")]
+    root: Instance<'tcx>,
+
     // Maps every instance to the instances used by it.
     #[serde(serialize_with = "serialize_refined_edges")]
     forward_edges: FxHashMap<Instance<'tcx>, FxHashSet<RefinedNode<'tcx>>>,
@@ -105,8 +108,9 @@ pub struct RefinedUsageGraph<'tcx> {
 }
 
 impl<'tcx> RefinedUsageGraph<'tcx> {
-    fn new() -> Self {
+    fn new(root: Instance<'tcx>) -> Self {
         Self {
+            root,
             forward_edges: FxHashMap::default(),
             backward_edges: FxHashMap::default(),
         }
@@ -125,10 +129,13 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
     }
 
     pub fn instances(&self) -> FxHashSet<Instance<'tcx>> {
-        let mut instances = FxHashSet::default();
-        for (from, to) in self.forward_edges.iter() {
-            instances.insert(from.clone());
-            instances.extend(to.iter().flat_map(|refined_node| refined_node.instances()));
+        let mut instances = FxHashSet::from_iter([self.root]);
+        for refined_nodes in self.forward_edges.values() {
+            instances.extend(
+                refined_nodes
+                    .iter()
+                    .flat_map(|refined_node| refined_node.instances()),
+            );
         }
         instances
     }
@@ -283,7 +290,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
             current_instance: root,
             current_body: root_body,
             reachable_indirect,
-            refined_usage_graph: RefinedUsageGraph::new(),
+            refined_usage_graph: RefinedUsageGraph::new(root),
             call_stack: vec![StackItem::new(root, tcx.def_span(root.def_id()))],
             tcx,
         }
