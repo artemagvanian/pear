@@ -1,31 +1,28 @@
-pub mod print {
-    #[doc = "impure"]
-    pub fn println_side_effect(left: usize, right: usize) -> usize {
+mod print {
+    fn println_side_effect(left: usize, right: usize) -> usize {
         println!("{} {}", left, right);
         left + right
     }
 }
 
-pub mod network {
+mod network {
     use std::io;
     use std::net::UdpSocket;
 
-    #[doc = "impure"]
-    pub fn udp_socket_send(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
+    fn udp_socket_send(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
         socket.send(buf)
     }
 }
 
-pub mod interior {
+mod interior {
     use std::cell::RefCell;
 
-    #[doc = "impure"]
-    pub fn ref_cell_mut(refcell: &RefCell<usize>) {
+    fn ref_cell_mut(refcell: &RefCell<usize>) {
         *refcell.borrow_mut() = 10;
     }
 }
 
-pub mod implicit {
+mod implicit {
     struct CustomSmartPointer {
         data: usize,
     }
@@ -36,16 +33,14 @@ pub mod implicit {
         }
     }
 
-    #[doc = "impure"]
-    pub fn sneaky_drop(data: usize) {
+    fn sneaky_drop(data: usize) {
         let sp = CustomSmartPointer { data };
     }
 }
 
-pub mod adversarial {
+mod adversarial {
     use std::ptr;
 
-    #[doc = "impure"]
     unsafe fn intrinsic_leaker(value: &u64, sink: &u64) {
         let sink = sink as *const u64;
         ptr::copy(value as *const u64, sink as *mut u64, 1);
@@ -59,13 +54,11 @@ pub mod adversarial {
         field: &'a mut u32,
     }
     
-    #[doc = "impure"]
     fn transmute_struct(value: u32, sink: StructImmut) {
         let sink_mut: StructMut = unsafe { std::mem::transmute(sink) };
         *sink_mut.field = value;
     }
 
-    #[doc = "impure"]
     fn transmute_arr(value: u32, sink: [&u32; 1]) {
         let sink_mut: [&mut u32; 1] = unsafe { std::mem::transmute(sink) };
         *sink_mut[0] = value;

@@ -4,7 +4,6 @@ struct Foo {
     c: bool,
 }
 
-#[doc = "pure"]
 fn structs(a: usize) {
     let mut foo = Foo {
         a,

@@ -1,12 +1,10 @@
-pub mod self_recursive {
-    #[doc = "pure"]
+mod self_recursive {
     fn pure(a: usize) {
         if a > 0 {
             pure(a - 1);
         }
     }
 
-    #[doc = "impure"]
     fn impure(a: usize) {
         if a > 0 {
             impure(a - 1);
@@ -15,22 +13,19 @@ pub mod self_recursive {
     }
 }
 
-pub mod mutually_recursive {
-    #[doc = "pure"]
+mod mutually_recursive {
     fn pure_1(a: usize) {
         if a > 0 {
             pure_2(a - 1);
         }
     }
 
-    #[doc = "pure"]
     fn pure_2(a: usize) {
         if a > 0 {
             pure_1(a - 1);
         }
     }
 
-    #[doc = "impure"]
     fn impure_1(a: usize) {
         if a > 0 {
             impure_2(a - 1);
@@ -38,7 +33,6 @@ pub mod mutually_recursive {
         println!("{}", a);
     }
 
-    #[doc = "impure"]
     fn impure_2(a: usize) {
         if a > 0 {
             impure_1(a - 1);

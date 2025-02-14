@@ -1,4 +1,4 @@
-pub mod object_type_eraser {
+mod object_type_eraser {
     trait DynamicTrait {
         fn inc(&self, a: usize) -> usize;
     }
@@ -20,7 +20,6 @@ pub mod object_type_eraser {
         }
     }
 
-    #[doc = "impure"]
     fn dyn_eraser(a: usize) -> usize {
         let dynamic: &dyn DynamicTrait = if a == 0 {
             &PureIncrementer {}
@@ -30,104 +29,87 @@ pub mod object_type_eraser {
         dyn_eraser_helper(a, dynamic)
     }
 
-    #[doc = "impure"]
     fn dyn_eraser_helper(a: usize, dynamic: &dyn DynamicTrait) -> usize {
         dynamic.inc(a)
     }
 }
 
-pub mod returns_impl_fn {
-    #[doc = "pure"]
+mod returns_impl_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, &cl)
     }
 
-    #[doc = "impure"]
     fn execute(a: usize, cl: &dyn Fn(usize) -> usize) -> usize {
         cl(a)
     }
 
-    #[doc = "pure"]
     fn hof(a: usize) -> impl Fn(usize) -> usize {
         move |x| x + a
     }
 }
 
-pub mod passthrough_impl_fn {
-    #[doc = "pure"]
+mod passthrough_impl_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, identity(&cl))
     }
 
-    #[doc = "impure"]
     fn execute(a: usize, cl: &dyn Fn(usize) -> usize) -> usize {
         cl(a)
     }
 
-    #[doc = "pure"]
     fn hof(a: usize) -> impl Fn(usize) -> usize {
         move |x| x + a
     }
 
-    #[doc = "pure"]
     fn identity<T>(a: T) -> T {
         a
     }
 }
 
-pub mod returns_boxed_fn {
-    #[doc = "pure"]
+mod returns_boxed_fn {
     fn outer(a: usize) -> usize {
         let cl = hof(a);
         execute(a, &cl)
     }
 
-    #[doc = "impure"]
     fn execute(a: usize, cl: &dyn Fn(usize) -> usize) -> usize {
         cl(a)
     }
 
-    #[doc = "pure"]
     fn hof(a: usize) -> Box<dyn Fn(usize) -> usize> {
         Box::new(move |x| x + a)
     }
 }
 
-pub mod returns_impl_fn_with_upvars {
-    #[doc = "pure"]
+mod returns_impl_fn_with_upvars {
     fn outer(a: usize) -> usize {
         let lam = |x| x + 1;
         let cl = hof(a, &lam);
         execute(a, &cl)
     }
 
-    #[doc = "impure"]
     fn execute(a: usize, cl: &dyn Fn(usize) -> usize) -> usize {
         cl(a)
     }
 
-    #[doc = "impure"]
     fn hof(a: usize, cl: &dyn Fn(usize) -> usize) -> impl Fn(usize) -> usize + '_ {
         move |x| cl(x + a)
     }
 }
 
-pub mod returns_boxed_fn_with_upvars {
-    #[doc = "pure"]
+mod returns_boxed_fn_with_upvars {
     fn outer(a: usize) -> usize {
         let lam = |x| x + 1;
         let cl = hof(a, &lam);
         execute(a, &cl)
     }
 
-    #[doc = "impure"]
     fn execute(a: usize, cl: &dyn Fn(usize) -> usize) -> usize {
         cl(a)
     }
 
-    #[doc = "impure"]
     fn hof(a: usize, cl: &dyn Fn(usize) -> usize) -> Box<dyn Fn(usize) -> usize + '_> {
         Box::new(move |x| cl(x + a))
     }

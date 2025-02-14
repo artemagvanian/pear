@@ -1,7 +1,5 @@
-#![feature(rustc_private, box_patterns, min_specialization)]
+#![feature(rustc_private, box_patterns, min_specialization, let_chains)]
 
-#[macro_use]
-extern crate tracing;
 #[macro_use]
 extern crate rustc_middle;
 extern crate polonius_engine;
@@ -24,7 +22,6 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 use rustc_utils::mir::borrowck_facts;
 use std::process::Command;
 
@@ -32,12 +29,15 @@ mod caching;
 mod global_analysis;
 mod local_analysis;
 mod reachability;
+mod refiner;
+mod serialize;
 mod utils;
 
-pub use caching::{dump_local_analysis_results, load_local_analysis_results}; 
-pub use global_analysis::{GlobalAnalysis, DumpingGlobalAnalysis};
-pub use local_analysis::{LocalAnalysis, CachedBodyAnalysis, CachedBody};
-pub use reachability::collect_mono_items_from;
+pub use caching::{dump_local_analysis_results, load_local_analysis_results};
+pub use global_analysis::{DumpingGlobalAnalysis, GlobalAnalysis};
+pub use local_analysis::{CachedBody, CachedBodyAnalysis, LocalAnalysis};
+pub use reachability::{collect_mono_items_from, Usage, UsedMonoItem};
+pub use refiner::{refine_from, TaintedNode};
 pub use utils::substituted_mir;
 
 fn get_default_rustc_target() -> Result<String, String> {
@@ -74,7 +74,13 @@ pub fn modify_cargo(cargo: &mut Command) {
 
 pub fn modify_compiler_args(compiler_args: &mut Vec<String>) {
     const RUSTC_ALWAYS_ENCODE_MIR_ARG: &str = "-Zalways-encode-mir";
-    compiler_args.push(RUSTC_ALWAYS_ENCODE_MIR_ARG.into());
+    const RUSTC_REGISTER_TOOL: &str = "-Zcrate-attr=feature(register_tool)";
+    const RUSTC_REGISTER_PEIRCE: &str = "-Zcrate-attr=register_tool(peirce)";
+    compiler_args.extend([
+        RUSTC_ALWAYS_ENCODE_MIR_ARG.into(),
+        RUSTC_REGISTER_TOOL.into(),
+        RUSTC_REGISTER_PEIRCE.into(),
+    ]);
 }
 
 pub enum CrateHandling {

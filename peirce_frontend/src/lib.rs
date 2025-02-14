@@ -5,14 +5,21 @@ extern crate rustc_interface;
 
 use clap::Parser;
 
+use regex::Regex;
 use rustc_plugin::{CrateFilter, RustcPlugin, RustcPluginArgs, Utf8Path};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, env, process::Command};
+
+pub mod logging;
 
 pub struct PeircePlugin;
 
 #[derive(Parser, Serialize, Deserialize)]
 pub struct PeircePluginArgs {
+    #[clap(short, long, default_value = "true")]
+    skip_generics: bool,
+    #[clap(short, long)]
+    filter: Option<String>,
     #[clap(last = true)]
     cargo_args: Vec<String>,
 }
@@ -41,7 +48,7 @@ impl RustcPlugin for PeircePlugin {
     fn run(
         self,
         mut compiler_args: Vec<String>,
-        _plugin_args: Self::Args,
+        plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
         peirce_backend::modify_compiler_args(&mut compiler_args);
 
@@ -54,7 +61,12 @@ impl RustcPlugin for PeircePlugin {
             ),
             peirce_backend::CrateHandling::GlobalAnalysis => {
                 Box::new(peirce_backend::GlobalAnalysisCallbacks::new(
-                    peirce_backend::DumpingGlobalAnalysis {},
+                    peirce_backend::DumpingGlobalAnalysis::new(
+                        plugin_args.filter.map(|filter| {
+                            Regex::new(filter.as_str()).expect("failed to compile filter regex")
+                        }),
+                        plugin_args.skip_generics,
+                    ),
                     peirce_backend::CachedBodyAnalysis {},
                 ))
             }

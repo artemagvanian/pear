@@ -27,12 +27,16 @@ impl<'tcx> LocalAnalysis<'tcx> for CachedBodyAnalysis {
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
-#[derive(TyDecodable, TyEncodable, Debug)]
+#[derive(TyDecodable, TyEncodable, Debug, Clone)]
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
 }
 
 impl<'tcx> CachedBody<'tcx> {
+    pub fn new(body: Body<'tcx>) -> Self {
+        Self { body }
+    }
+    
     /// Retrieve a body and the necessary facts for a local item.
     ///
     /// Ensure this is called early enough in the compiler so that the body has not been stolen yet.
