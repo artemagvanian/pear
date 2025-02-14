@@ -45,7 +45,7 @@ pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
 /// Loads MIR [`Body`]s retrieved during LocalAnalysis via call to substituted_mir(). `
 impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
     fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
-        let peirce_entry_attribute = [Symbol::intern("peirce"), Symbol::intern("analysis_entry")];
+        let pear_entry_attribute = [Symbol::intern("pear"), Symbol::intern("analysis_entry")];
         let hir = tcx.hir();
 
         for item_id in tcx.hir().items() {
@@ -54,7 +54,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
             let def_path_str = tcx.def_path_str(def_id);
 
             if tcx
-                .get_attrs_by_path(def_id, &peirce_entry_attribute)
+                .get_attrs_by_path(def_id, &pear_entry_attribute)
                 .next()
                 .is_none()
             {
@@ -94,7 +94,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                     collect_mono_items_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
 
                 fs::write(
-                    format!("{def_path_str}.peirce.json"),
+                    format!("{def_path_str}.pear.json"),
                     serde_json::to_string_pretty(&usage_map)
                         .expect("failed to serialize collection results"),
                 )
@@ -102,7 +102,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
 
                 let refined_usage_graph = refine_from(instance, items, tcx);
                 fs::write(
-                    format!("{def_path_str}.refined.peirce.json"),
+                    format!("{def_path_str}.refined.pear.json"),
                     serde_json::to_string_pretty(&refined_usage_graph)
                         .expect("failed to serialize refinement results"),
                 )

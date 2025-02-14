@@ -75,11 +75,11 @@ pub fn modify_cargo(cargo: &mut Command) {
 pub fn modify_compiler_args(compiler_args: &mut Vec<String>) {
     const RUSTC_ALWAYS_ENCODE_MIR_ARG: &str = "-Zalways-encode-mir";
     const RUSTC_REGISTER_TOOL: &str = "-Zcrate-attr=feature(register_tool)";
-    const RUSTC_REGISTER_PEIRCE: &str = "-Zcrate-attr=register_tool(peirce)";
+    const RUSTC_REGISTER_PEAR: &str = "-Zcrate-attr=register_tool(pear)";
     compiler_args.extend([
         RUSTC_ALWAYS_ENCODE_MIR_ARG.into(),
         RUSTC_REGISTER_TOOL.into(),
-        RUSTC_REGISTER_PEIRCE.into(),
+        RUSTC_REGISTER_PEAR.into(),
     ]);
 }
 

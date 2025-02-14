@@ -11,7 +11,7 @@ mod fn_ptr {
         func(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -43,7 +43,7 @@ mod stored_fn_ptr {
         a - b
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;

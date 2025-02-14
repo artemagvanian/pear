@@ -1,4 +1,4 @@
 [workspace]
-members = ["peirce_backend", "peirce_frontend"]
+members = ["pear_backend", "pear_frontend"]
 exclude = ["tests"]
 resolver = "2"

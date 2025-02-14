@@ -1,5 +1,5 @@
 [package]
-name = "peirce_frontend"
+name = "pear_frontend"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 rustc_private = true
 
 [dependencies]
-peirce_backend = { path = "../peirce_backend" }
+pear_backend = { path = "../pear_backend" }
 
 rustc_plugin = { path = "../rustc_plugin/crates/rustc_plugin" }
 rustc_utils = { path = "../rustc_plugin/crates/rustc_utils" }

@@ -12,10 +12,10 @@ target/
 # Python virtual environment
 venv/
 
-# Peirce-specific files
-*.peirce.json
-*.peirce.log
-*.peirce.svg
+# Pear-specific files
+*.pear.json
+*.pear.log
+*.pear.svg
 
 # macOS stuff
 .DS_Store

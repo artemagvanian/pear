@@ -4,5 +4,5 @@
 #![allow(dead_code, unused)]
 
 mod collections;
-mod peirce;
+mod pear;
 mod scrutinizer;

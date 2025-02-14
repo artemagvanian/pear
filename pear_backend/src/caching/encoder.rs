@@ -45,14 +45,14 @@ macro_rules! encoder_methods {
 }
 
 /// A structure that implements `TyEncoder` for us.
-pub struct PeirceEncoder<'tcx> {
+pub struct PearEncoder<'tcx> {
     tcx: TyCtxt<'tcx>,
     file_encoder: FileEncoder,
     type_shorthands: FxHashMap<ty::Ty<'tcx>, usize>,
     predicate_shorthands: FxHashMap<ty::PredicateKind<'tcx>, usize>,
 }
 
-impl<'tcx> PeirceEncoder<'tcx> {
+impl<'tcx> PearEncoder<'tcx> {
     /// Create a new encoder that will write to the provided file.
     pub fn new(path: impl AsRef<Path>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
@@ -69,12 +69,12 @@ impl<'tcx> PeirceEncoder<'tcx> {
 }
 
 /// Convenience function that encodes some value to a file.
-pub fn encode_to_file<'tcx, V: Encodable<PeirceEncoder<'tcx>>>(
+pub fn encode_to_file<'tcx, V: Encodable<PearEncoder<'tcx>>>(
     tcx: TyCtxt<'tcx>,
     path: impl AsRef<Path>,
     v: &V,
 ) {
-    let mut encoder = PeirceEncoder::new(path, tcx);
+    let mut encoder = PearEncoder::new(path, tcx);
     v.encode(&mut encoder);
     encoder.finish();
 }
@@ -82,7 +82,7 @@ pub fn encode_to_file<'tcx, V: Encodable<PeirceEncoder<'tcx>>>(
 /// Whatever can't survive the crossing we need to live without.
 const CLEAR_CROSS_CRATE: bool = true;
 
-impl<'tcx> Encoder for PeirceEncoder<'tcx> {
+impl<'tcx> Encoder for PearEncoder<'tcx> {
     encoder_methods! {
         emit_usize(usize);
         emit_u128(u128);
@@ -101,7 +101,7 @@ impl<'tcx> Encoder for PeirceEncoder<'tcx> {
     }
 }
 
-impl<'tcx> TyEncoder for PeirceEncoder<'tcx> {
+impl<'tcx> TyEncoder for PearEncoder<'tcx> {
     type I = TyCtxt<'tcx>;
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
@@ -126,20 +126,20 @@ impl<'tcx> TyEncoder for PeirceEncoder<'tcx> {
     }
 }
 
-impl<'tcx> Encodable<PeirceEncoder<'tcx>> for CrateNum {
-    fn encode(&self, s: &mut PeirceEncoder<'tcx>) {
+impl<'tcx> Encodable<PearEncoder<'tcx>> for CrateNum {
+    fn encode(&self, s: &mut PearEncoder<'tcx>) {
         s.tcx.stable_crate_id(*self).encode(s)
     }
 }
 
 /// Something that implements `TyDecoder`.
-pub struct PeirceDecoder<'tcx, 'a> {
+pub struct PearDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
 }
 
-impl<'tcx, 'a> PeirceDecoder<'tcx, 'a> {
+impl<'tcx, 'a> PearDecoder<'tcx, 'a> {
     /// Decode what is in this buffer.
     pub fn new(tcx: TyCtxt<'tcx>, buf: &'a [u8]) -> Self {
         Self {
@@ -151,18 +151,18 @@ impl<'tcx, 'a> PeirceDecoder<'tcx, 'a> {
 }
 
 /// Convenience function that decodes a value from a file.
-pub fn decode_from_file<'tcx, V: for<'a> Decodable<PeirceDecoder<'tcx, 'a>>>(
+pub fn decode_from_file<'tcx, V: for<'a> Decodable<PearDecoder<'tcx, 'a>>>(
     tcx: TyCtxt<'tcx>,
     path: impl AsRef<Path>,
 ) -> io::Result<V> {
     let mut file = File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
-    let mut decoder = PeirceDecoder::new(tcx, buf.as_slice());
+    let mut decoder = PearDecoder::new(tcx, buf.as_slice());
     Ok(V::decode(&mut decoder))
 }
 
-impl<'tcx, 'a> TyDecoder for PeirceDecoder<'tcx, 'a> {
+impl<'tcx, 'a> TyDecoder for PearDecoder<'tcx, 'a> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     type I = TyCtxt<'tcx>;
@@ -211,7 +211,7 @@ macro_rules! decoder_methods {
     }
 }
 
-impl<'tcx, 'a> Decoder for PeirceDecoder<'tcx, 'a> {
+impl<'tcx, 'a> Decoder for PearDecoder<'tcx, 'a> {
     decoder_methods! {
         read_usize(usize);
         read_u128(u128);
@@ -236,20 +236,20 @@ impl<'tcx, 'a> Decoder for PeirceDecoder<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for CrateNum {
-    fn decode(d: &mut PeirceDecoder<'tcx, 'a>) -> Self {
+impl<'tcx, 'a> Decodable<PearDecoder<'tcx, 'a>> for CrateNum {
+    fn decode(d: &mut PearDecoder<'tcx, 'a>) -> Self {
         d.tcx.stable_crate_id_to_crate_num(Decodable::decode(d))
     }
 }
 
-impl<'tcx> Encodable<PeirceEncoder<'tcx>> for DefIndex {
-    fn encode(&self, s: &mut PeirceEncoder<'tcx>) {
+impl<'tcx> Encodable<PearEncoder<'tcx>> for DefIndex {
+    fn encode(&self, s: &mut PearEncoder<'tcx>) {
         self.as_u32().encode(s)
     }
 }
 
-impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for DefIndex {
-    fn decode(d: &mut PeirceDecoder<'tcx, 'a>) -> Self {
+impl<'tcx, 'a> Decodable<PearDecoder<'tcx, 'a>> for DefIndex {
+    fn decode(d: &mut PearDecoder<'tcx, 'a>) -> Self {
         Self::from_u32(u32::decode(d))
     }
 }
@@ -258,8 +258,8 @@ const TAG_PARTIAL_SPAN: u8 = 0;
 const TAG_VALID_SPAN_FULL: u8 = 1;
 
 /// We need to overwrite this, because we need it to dispatch to `SpanData`.
-impl<'tcx> Encodable<PeirceEncoder<'tcx>> for Span {
-    fn encode(&self, s: &mut PeirceEncoder<'tcx>) {
+impl<'tcx> Encodable<PearEncoder<'tcx>> for Span {
+    fn encode(&self, s: &mut PearEncoder<'tcx>) {
         self.data().encode(s)
     }
 }
@@ -267,8 +267,8 @@ impl<'tcx> Encodable<PeirceEncoder<'tcx>> for Span {
 /// Some of this code is lifted from `EncodeContext`.
 ///
 /// However we directly encode file names because that's easier.
-impl<'tcx> Encodable<PeirceEncoder<'tcx>> for SpanData {
-    fn encode(&self, s: &mut PeirceEncoder<'tcx>) {
+impl<'tcx> Encodable<PearEncoder<'tcx>> for SpanData {
+    fn encode(&self, s: &mut PearEncoder<'tcx>) {
         if self.is_dummy() {
             return TAG_PARTIAL_SPAN.encode(s);
         }
@@ -296,13 +296,13 @@ impl<'tcx> Encodable<PeirceEncoder<'tcx>> for SpanData {
 
 /// For now this does nothing, simply dropping the context. We don't use it
 /// anyway in our errors.
-impl<'tcx> Encodable<PeirceEncoder<'tcx>> for SyntaxContext {
-    fn encode(&self, _: &mut PeirceEncoder<'tcx>) {}
+impl<'tcx> Encodable<PearEncoder<'tcx>> for SyntaxContext {
+    fn encode(&self, _: &mut PearEncoder<'tcx>) {}
 }
 
 /// Same as for the [`Encodable`] impl, we need to dispatch to [`SpanData`].
-impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for Span {
-    fn decode(d: &mut PeirceDecoder<'tcx, 'a>) -> Self {
+impl<'tcx, 'a> Decodable<PearDecoder<'tcx, 'a>> for Span {
+    fn decode(d: &mut PearDecoder<'tcx, 'a>) -> Self {
         SpanData::decode(d).span()
     }
 }
@@ -318,8 +318,8 @@ fn path_in_real_path(r: &RealFileName) -> &PathBuf {
 /// Partially uses code similar to `DecodeContext`. But we fully encode file
 /// names. We then map them back by searching the currently loaded files. If the
 /// file we care about is not found there, we try and load its source.
-impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for SpanData {
-    fn decode(d: &mut PeirceDecoder<'tcx, 'a>) -> Self {
+impl<'tcx, 'a> Decodable<PearDecoder<'tcx, 'a>> for SpanData {
+    fn decode(d: &mut PearDecoder<'tcx, 'a>) -> Self {
         let ctxt = SyntaxContext::decode(d);
         let tag = u8::decode(d);
         if tag == TAG_PARTIAL_SPAN {
@@ -371,8 +371,8 @@ impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for SpanData {
 }
 
 /// Always returns [`SyntaxContext::root()`] at the moment.
-impl<'tcx, 'a> Decodable<PeirceDecoder<'tcx, 'a>> for SyntaxContext {
-    fn decode(_: &mut PeirceDecoder<'tcx, 'a>) -> Self {
+impl<'tcx, 'a> Decodable<PearDecoder<'tcx, 'a>> for SyntaxContext {
+    fn decode(_: &mut PearDecoder<'tcx, 'a>) -> Self {
         SyntaxContext::root()
     }
 }

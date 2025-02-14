@@ -22,7 +22,7 @@ mod dyn_ref {
         s.bar(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -61,7 +61,7 @@ mod box_dyn_ref {
         s.bar(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -116,7 +116,7 @@ mod dyn_super_trait {
         s.super_bar(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -165,7 +165,7 @@ mod dyn_different_vtables {
         s.b(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -248,7 +248,7 @@ mod dyn_diamond {
         s.c(a, b)
     }
     
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;

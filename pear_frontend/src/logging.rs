@@ -9,9 +9,9 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
             ))
         })
         .level(log::LevelFilter::Warn)
-        .level_for("peirce_backend", log::LevelFilter::Debug)
-        .level_for("peirce_frontend", log::LevelFilter::Debug)
-        .chain(fern::log_file("output.peirce.log")?)
+        .level_for("pear_backend", log::LevelFilter::Debug)
+        .level_for("pear_frontend", log::LevelFilter::Debug)
+        .chain(fern::log_file("output.pear.log")?)
         .apply()?;
     Ok(())
 }

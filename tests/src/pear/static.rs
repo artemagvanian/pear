@@ -1,7 +1,7 @@
 mod static_closure {
     static FN: fn(usize, usize) -> usize = |a: usize, b: usize| a + b;
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let s = FN(5, 5);
     }
@@ -28,7 +28,7 @@ mod static_fn {
         fn_3
     };
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let s = FUNC(5, 5);
     }

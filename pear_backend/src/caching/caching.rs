@@ -72,7 +72,7 @@ pub fn dump_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tc
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
 }
 
-const INTERMEDIATE_ARTIFACT_EXT: &str = "peirce_cache";
+const INTERMEDIATE_ARTIFACT_EXT: &str = "pear_cache";
 
 /// Get the path where artifacts from this crate would be stored. Unlike
 /// [`TyCtxt::crate_extern_paths`] this function does not crash when supplied

@@ -7,10 +7,10 @@ use rustc_middle::{
 use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts;
 
-use crate::caching::{PeirceDecoder, PeirceEncoder};
+use crate::caching::{PearDecoder, PearEncoder};
 
 pub trait LocalAnalysis<'tcx> {
-    type Out: Encodable<PeirceEncoder<'tcx>> + for<'a> Decodable<PeirceDecoder<'tcx, 'a>>;
+    type Out: Encodable<PearEncoder<'tcx>> + for<'a> Decodable<PearDecoder<'tcx, 'a>>;
 
     fn construct(&self, tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self::Out;
 }

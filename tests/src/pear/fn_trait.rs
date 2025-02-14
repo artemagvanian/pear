@@ -11,7 +11,7 @@ mod fn_trait {
         func(a, b)
     }
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -39,7 +39,7 @@ mod fn_mut_trait {
         func(a, b)
     }
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -58,7 +58,7 @@ mod fn_trait_closure {
         func(a, b)
     }
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -89,7 +89,7 @@ mod boxed_fn_trait {
         func(a, b)
     }
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
@@ -116,7 +116,7 @@ mod boxed_closure_as_fn_trait {
         func(a, b)
     }
 
-    #[peirce::analysis_entry]
+    #[pear::analysis_entry]
     fn main() {
         let a = 5;
         let b = 6;
