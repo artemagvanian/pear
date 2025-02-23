@@ -13,8 +13,7 @@ where
     }
 }
 
-#[kani::proof]
-#[kani::unwind(6)]
+#[pear::analysis_entry]
 fn main() {
     let mut sum = 0_usize;
     let elems = [1_usize, 2, 3, 4, 5];

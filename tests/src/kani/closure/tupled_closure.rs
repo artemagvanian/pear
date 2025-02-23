@@ -19,7 +19,7 @@ impl Foo {
     }
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn main() {
     let x = Foo {};
     assert!(x.f() == 27);

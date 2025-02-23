@@ -8,15 +8,13 @@ struct Void;
 
 /// Invoke given function with the given 'input'.
 fn invoke(input: usize, f: fn(Void, usize, Void) -> usize) -> usize {
-    kani::cover!();
     f(Void, input, Void)
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn check_zst_param() {
-    let input = kani::any();
+    let input = 42;
     let closure = |a: Void, out: usize, b: Void| {
-        kani::cover!();
         assert!(&a as *const Void != std::ptr::null(), "Should succeed");
         assert!(&b as *const Void != std::ptr::null(), "Should succeed");
         out

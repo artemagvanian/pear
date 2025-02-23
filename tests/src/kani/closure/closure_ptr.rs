@@ -7,9 +7,9 @@ fn invoke(input: usize, f: fn(usize) -> usize) -> usize {
     f(input)
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn check_closure_ptr() {
-    let input = kani::any();
+    let input = 42;
     let output = invoke(input, |x| x);
     assert_eq!(output, input);
 }

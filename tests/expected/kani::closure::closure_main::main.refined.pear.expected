@@ -1,0 +1,5 @@
+kani::closure::closure_main::test_three_args::{closure#0}
+kani::closure::closure_main::closure_with_1_arg::{closure#0}
+kani::closure::closure_main::test_env::{closure#0}
+kani::closure::closure_main::closure_with_empty_args::{closure#0}
+kani::closure::closure_main::test_unit_args::{closure#0}
