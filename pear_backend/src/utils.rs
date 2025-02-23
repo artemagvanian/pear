@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use rustc_hir::{def_id::DefId, Unsafety};
 use rustc_middle::ty::{self, FnSig, GenericArgsRef, PolyFnSig, TyCtxt};
 use rustc_target::spec::abi::Abi;
@@ -14,26 +15,30 @@ pub fn fn_trait_method_sig<'tcx>(
     tcx: TyCtxt<'tcx>,
 ) -> FnSig<'tcx> {
     let item_ty = tcx.type_of(item_def_id).instantiate(tcx, item_args);
+    let item_args = item_args
+        .iter()
+        .filter_map(|arg| arg.as_type())
+        .collect_vec();
     match item_ty.kind() {
         // Handles the case when the item is an actual method; e.g., FnOnce::call_once.
         ty::FnDef(..) => {
             // From the generics, we need to find a generic that corresponds to Self and one that
             // corresponds to Args.
             let (self_arg, args_arg) = {
-                let maybe_self_ty = item_args[0].expect_ty();
+                let maybe_self_ty = item_args[0];
                 match maybe_self_ty.kind() {
                     // Generic order is swapped in the implementation of Fn traits for boxed
                     // closures :(
                     ty::Tuple(..) => {
-                        let self_arg = item_args[1].expect_ty();
+                        let self_arg = item_args[1];
                         // Swap the order.
                         (self_arg, maybe_self_ty)
                     }
                     // Sometimes the Self argument can be boxed, need to unbox it.
-                    _ if maybe_self_ty.is_box() => {
-                        (maybe_self_ty.boxed_ty(), item_args[1].expect_ty())
-                    }
-                    _ => (maybe_self_ty, item_args[1].expect_ty()),
+                    _ if maybe_self_ty.is_box() => (maybe_self_ty.boxed_ty(), item_args[1]),
+                    // Sometimes the Self argument can be a ref, need to deref it.
+                    _ if maybe_self_ty.is_ref() => (maybe_self_ty.peel_refs(), item_args[1]),
+                    _ => (maybe_self_ty, item_args[1]),
                 }
             };
 
@@ -66,7 +71,7 @@ pub fn fn_trait_method_sig<'tcx>(
                         tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(output_ty));
                     tcx.mk_fn_sig(inputs, output, false, Unsafety::Normal, Abi::Rust)
                 }
-                _ => bug!(),
+                _ => bug!("{:?}", self_arg.kind()),
             }
         }
         // Sometimes closures can be a part of the vtable, since they can implicitly implement Fn

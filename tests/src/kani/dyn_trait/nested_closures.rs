@@ -4,7 +4,7 @@
 // Check that we can codegen various nesting structures of boxes and
 // pointer to closures.
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn main() {
     // Create a nested boxed once-callable closure
     let f: Box<Box<dyn FnOnce(i32)>> = Box::new(Box::new(|x| assert!(x == 1)));
@@ -19,7 +19,12 @@ fn main() {
     p(1.0, 2);
 
     // Additional level of pointer nesting
-    let q: &dyn Fn(f32, i32) = &p;
+    let g_1 = |x: f32, y: i32| {
+        assert!(x == 1.0);
+        assert!(y == 2)
+    };
+    let p_1: &dyn Fn(f32, i32) = &g_1;
+    let q: &dyn Fn(f32, i32) = &p_1;
     q(1.0, 2);
 
     // Create a boxed pointer to a closure
@@ -35,6 +40,7 @@ fn main() {
     s(3);
 
     // A pointer to the boxed box
-    let t: &Box<Box<dyn Fn(i32)>> = &s;
+    let s_1: Box<Box<dyn Fn(i32)>> = Box::new(Box::new(|x| assert!(x == 3)));
+    let t: &Box<Box<dyn Fn(i32)>> = &s_1;
     t(3);
 }

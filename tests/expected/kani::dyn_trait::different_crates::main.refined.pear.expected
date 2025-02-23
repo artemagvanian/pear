@@ -1,0 +1,2 @@
+<kani::dyn_trait::different_crates::Counter as std::iter::Iterator>::next
+<kani::dyn_trait::different_crates::Counter as kani::dyn_trait::different_crates::Iterator>::next

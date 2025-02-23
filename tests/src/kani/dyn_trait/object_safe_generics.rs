@@ -30,7 +30,7 @@ impl<T> Foo<T> for () {
 
 impl Bar for () {}
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn main() {
     let b: &dyn Bar = &();
     // The vtable for b will now have two Foo::method entries,

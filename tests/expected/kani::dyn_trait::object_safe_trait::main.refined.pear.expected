@@ -1,0 +1,5 @@
+<kani::dyn_trait::object_safe_trait::S as kani::dyn_trait::object_safe_trait::NonDispatchable>::foo
+<kani::dyn_trait::object_safe_trait::S as kani::dyn_trait::object_safe_trait::NonDispatchable>::returns
+<kani::dyn_trait::object_safe_trait::S as kani::dyn_trait::object_safe_trait::NonDispatchable>::param
+<kani::dyn_trait::object_safe_trait::S as kani::dyn_trait::object_safe_trait::NonDispatchable>::typed::<bool>
+<kani::dyn_trait::object_safe_trait::S as kani::dyn_trait::object_safe_trait::NonDispatchable>::typed::<u32>

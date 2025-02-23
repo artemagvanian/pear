@@ -1,0 +1,4 @@
+<kani::dyn_trait::boxed_trait::Rectangle as kani::dyn_trait::boxed_trait::Shape>::area
+<kani::dyn_trait::boxed_trait::Square as kani::dyn_trait::boxed_trait::Shape>::area
+<kani::dyn_trait::boxed_trait::Rectangle as kani::dyn_trait::boxed_trait::Shape>::vol
+<kani::dyn_trait::boxed_trait::Square as kani::dyn_trait::boxed_trait::Shape>::vol

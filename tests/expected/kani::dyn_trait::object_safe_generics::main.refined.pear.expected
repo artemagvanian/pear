@@ -1,0 +1,1 @@
+<() as kani::dyn_trait::object_safe_generics::Foo<u32>>::method

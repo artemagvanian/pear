@@ -45,7 +45,7 @@ impl T for S {
     }
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn main() {
     let t = S::new_box(1, 2, 3);
     let a = <dyn T as A>::foo(&*t);

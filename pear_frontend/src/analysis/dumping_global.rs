@@ -43,6 +43,10 @@ pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
 /// Loads MIR [`Body`]s retrieved during LocalAnalysis via call to substituted_mir(). `
 impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
     fn perform_analysis(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+        colored::control::set_override(true);
+
+        println!("{}", "Starting PEAR analysis.".blue().bold());
+
         let pear_entry_attribute = [Symbol::intern("pear"), Symbol::intern("analysis_entry")];
         let hir = tcx.hir();
 
@@ -119,36 +123,27 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 .expect("failed to write refinement results to a file");
             }
         }
+        colored::control::unset_override();
         rustc_driver::Compilation::Continue
     }
 }
 
 fn run_test(def_path_str: &str, refined_usage_graph: &RefinedUsageGraph, expected: &str) {
-    colored::control::set_override(true);
-    println!(
-        "{}",
-        format!("Running refinement test: {def_path_str}...")
-            .blue()
-            .bold(),
-    );
-    let mut instances = refined_usage_graph
+    println!("{}", format!("  [{def_path_str}]").blue().bold(),);
+    let instances = refined_usage_graph
         .instances()
         .into_iter()
-        .map(|instance| instance.to_string());
+        .map(|instance| instance.to_string())
+        .collect_vec();
     for line in expected.lines() {
-        if !instances.contains(line) {
+        if !instances.contains(&String::from(line)) {
+            println!("{}", "    Test failed.".red().bold());
             println!(
                 "{}",
-                format!("Refinement test {def_path_str} failed.")
-                    .red()
-                    .bold()
+                format!("      {line} is not present in the refined graph.").red()
             );
             return;
         }
     }
-    println!(
-        "{}",
-        format!("Refinement test {def_path_str} passed.").green()
-    );
-    colored::control::unset_override( );
+    println!("{}", "    Test passed.".green());
 }

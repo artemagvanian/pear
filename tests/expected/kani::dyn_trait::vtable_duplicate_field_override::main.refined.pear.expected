@@ -1,0 +1,3 @@
+<kani::dyn_trait::vtable_duplicate_field_override::S as kani::dyn_trait::vtable_duplicate_field_override::A>::foo
+<kani::dyn_trait::vtable_duplicate_field_override::S as kani::dyn_trait::vtable_duplicate_field_override::B>::foo
+<kani::dyn_trait::vtable_duplicate_field_override::S as kani::dyn_trait::vtable_duplicate_field_override::T>::foo

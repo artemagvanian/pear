@@ -14,26 +14,13 @@ impl Byte for u8 {
     }
 }
 
-fn all_zero(num: Box<dyn Byte>) -> bool {
-    num.eq(0x0)
-}
-
-#[kani::proof]
-fn check_box() {
-    let num: u8 = kani::any();
-    kani::assume(num != 0);
-    let boxed: Box<dyn Byte + Sync> = Box::new(num);
-    assert!(!all_zero(boxed));
-}
-
 fn all_zero_ref(num: &dyn Byte) -> bool {
     num.eq(0x0)
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn check_ref() {
-    let num: u8 = kani::any();
-    kani::assume(num != 0);
+    let num: u8 = 42;
     let fat_ptr: &(dyn Byte + Sync) = &num;
     assert!(!all_zero_ref(fat_ptr));
 }

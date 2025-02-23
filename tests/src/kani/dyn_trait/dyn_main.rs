@@ -28,9 +28,13 @@ fn random_animal(random_number: i64) -> Box<dyn Animal> {
     if random_number < 5 { Box::new(Sheep {}) } else { Box::new(Cow {}) }
 }
 
-#[kani::proof]
+fn rnd() -> i64 {
+    5
+}
+
+#[pear::analysis_entry]
 fn main() {
-    let random_number = kani::any();
+    let random_number = rnd();
     let animal = random_animal(random_number);
     let s = animal.noise();
     if random_number < 5 {

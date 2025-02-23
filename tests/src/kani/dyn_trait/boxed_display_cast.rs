@@ -17,14 +17,16 @@ impl Display for Concrete {
     }
 }
 
-fn f<'a>(x: &'a &Box<dyn Error + Send + Sync>) -> Box<&'a dyn Debug> {
-    let d = x as &dyn Debug;
+fn f<'a>(x: &'a &Box<dyn Error + Send + Sync>) -> Box<&'a dyn Display> {
+    let d = x as &dyn Display;
     Box::new(d)
 }
 
-#[kani::proof]
+#[pear::analysis_entry]
 fn main() {
     let c = Concrete {};
     let x = Box::new(c) as Box<dyn Error + Send + Sync>;
-    let d = f(&&x);
+    let r = &x;
+    let d = f(&r);
+    let fmt = format!("{}", d);
 }
