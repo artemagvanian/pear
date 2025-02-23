@@ -7,7 +7,7 @@ use rustc_middle::{
 use rustc_span::Span;
 use serde::Serializer;
 
-use crate::{reachability::UsedMonoItem, refiner::RefinedNode};
+use crate::{reachability::Node, refiner::RefinedNode};
 
 pub fn serialize_def_id<S>(def_id: &DefId, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -24,7 +24,7 @@ where
 }
 
 pub fn serialize_edges<'tcx, S>(
-    edges: &FxHashMap<MonoItem<'tcx>, FxHashSet<UsedMonoItem<'tcx>>>,
+    edges: &FxHashMap<MonoItem<'tcx>, FxHashSet<Node<'tcx>>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where

@@ -168,13 +168,13 @@ pub enum ImplType {
 
 /// Mono item with usage specifics attached.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize)]
-pub struct UsedMonoItem<'tcx> {
+pub struct Node<'tcx> {
     #[serde(serialize_with = "serialize_mono_item")]
     item: MonoItem<'tcx>,
     usage: Usage<'tcx>,
 }
 
-impl<'tcx> UsedMonoItem<'tcx> {
+impl<'tcx> Node<'tcx> {
     pub fn new(item: MonoItem<'tcx>, usage: Usage<'tcx>) -> Self {
         Self { item, usage }
     }
@@ -213,14 +213,14 @@ impl<'tcx> UsedMonoItem<'tcx> {
 pub struct UsageGraph<'tcx> {
     // Maps every mono item to the mono items used by it.
     #[serde(serialize_with = "serialize_edges")]
-    forward_edges: FxHashMap<MonoItem<'tcx>, FxHashSet<UsedMonoItem<'tcx>>>,
+    forward_edges: FxHashMap<MonoItem<'tcx>, FxHashSet<Node<'tcx>>>,
 
     // Maps every mono item to the mono items that use it.
     #[serde(serialize_with = "serialize_edges")]
-    backward_edges: FxHashMap<MonoItem<'tcx>, FxHashSet<UsedMonoItem<'tcx>>>,
+    backward_edges: FxHashMap<MonoItem<'tcx>, FxHashSet<Node<'tcx>>>,
 }
 
-type UsedMonoItems<'tcx> = Vec<UsedMonoItem<'tcx>>;
+type UsedMonoItems<'tcx> = Vec<Node<'tcx>>;
 
 impl<'tcx> UsageGraph<'tcx> {
     fn new() -> UsageGraph<'tcx> {
@@ -232,8 +232,8 @@ impl<'tcx> UsageGraph<'tcx> {
 
     fn record_used<'a>(
         &mut self,
-        user_item: UsedMonoItem<'tcx>,
-        used_items: Vec<UsedMonoItem<'tcx>>,
+        user_item: Node<'tcx>,
+        used_items: Vec<Node<'tcx>>,
     ) where
         'tcx: 'a,
     {
@@ -254,8 +254,8 @@ impl<'tcx> UsageGraph<'tcx> {
 /// Collect all monomorphized items reachable from `starting_item`.
 fn collect_items_rec<'tcx>(
     tcx: TyCtxt<'tcx>,
-    starting_item: UsedMonoItem<'tcx>,
-    visited: &mut FxHashSet<UsedMonoItem<'tcx>>,
+    starting_item: Node<'tcx>,
+    visited: &mut FxHashSet<Node<'tcx>>,
     usage_map: &mut UsageGraph<'tcx>,
     attempt_resolving_partial: bool,
 ) {
@@ -302,7 +302,7 @@ fn collect_items_rec<'tcx>(
             }
 
             if tcx.needs_thread_local_shim(def_id) {
-                used_items.push(UsedMonoItem::new(
+                used_items.push(Node::new(
                     MonoItem::Fn(Instance {
                         def: InstanceDef::ThreadLocalShim(def_id),
                         args: GenericArgs::empty(),
@@ -336,7 +336,7 @@ fn collect_items_rec<'tcx>(
                         }
                         hir::InlineAsmOperand::SymStatic { path: _, def_id } => {
                             trace!("collecting static {:?}", def_id);
-                            used_items.push(UsedMonoItem::new(
+                            used_items.push(Node::new(
                                 MonoItem::Static(*def_id),
                                 Usage::InlineAsm,
                             ));
@@ -499,7 +499,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                 assert!(self.tcx.is_thread_local_static(def_id));
                 trace!("collecting thread-local static {:?}", def_id);
                 self.output
-                    .push(UsedMonoItem::new(MonoItem::Static(def_id), Usage::Static));
+                    .push(Node::new(MonoItem::Static(def_id), Usage::Static));
             }
             _ => { /* not interesting */ }
         }
@@ -598,7 +598,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                         }
                         mir::InlineAsmOperand::SymStatic { def_id } => {
                             trace!("collecting asm sym static {:?}", def_id);
-                            self.output.push(UsedMonoItem::new(
+                            self.output.push(Node::new(
                                 MonoItem::Static(def_id),
                                 Usage::InlineAsm,
                             ));
@@ -855,8 +855,8 @@ fn find_vtable_types_for_unsizing<'tcx>(
     }
 }
 
-fn create_fn_mono_item<'tcx>(instance: Instance<'tcx>, usage: Usage<'tcx>) -> UsedMonoItem<'tcx> {
-    UsedMonoItem::new(MonoItem::Fn(instance), usage)
+fn create_fn_mono_item<'tcx>(instance: Instance<'tcx>, usage: Usage<'tcx>) -> Node<'tcx> {
+    Node::new(MonoItem::Fn(instance), usage)
 }
 
 /// Creates a `MonoItem` for each method that is referenced by the vtable for
@@ -937,7 +937,7 @@ fn collect_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId, output: &mut UsedMo
         GlobalAlloc::Static(def_id) => {
             assert!(!tcx.is_thread_local_static(def_id));
             trace!("collecting static {:?}", def_id);
-            output.push(UsedMonoItem::new(MonoItem::Static(def_id), Usage::Static));
+            output.push(Node::new(MonoItem::Static(def_id), Usage::Static));
         }
         GlobalAlloc::Memory(alloc) => {
             trace!("collecting {:?} with {:#?}", alloc_id, alloc);
@@ -1004,16 +1004,16 @@ fn collect_const_value<'tcx>(
     }
 }
 
-pub fn collect_mono_items_from<'tcx>(
+pub fn collect_from<'tcx>(
     tcx: TyCtxt<'tcx>,
     root: MonoItem<'tcx>,
     attempt_resolving_partial: bool,
-) -> (FxHashSet<UsedMonoItem<'tcx>>, UsageGraph<'tcx>) {
+) -> (FxHashSet<Node<'tcx>>, UsageGraph<'tcx>) {
     let mut visited = FxHashSet::default();
     let mut usage_map = UsageGraph::new();
     collect_items_rec(
         tcx,
-        UsedMonoItem::new(root, Usage::Root),
+        Node::new(root, Usage::Root),
         &mut visited,
         &mut usage_map,
         attempt_resolving_partial,

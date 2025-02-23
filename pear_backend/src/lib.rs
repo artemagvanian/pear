@@ -25,20 +25,17 @@ extern crate rustc_type_ir;
 use rustc_utils::mir::borrowck_facts;
 use std::process::Command;
 
+mod analysis;
 mod caching;
-mod global_analysis;
-mod local_analysis;
 mod reachability;
 mod refiner;
 mod serialize;
 mod utils;
 
-pub use caching::{dump_local_analysis_results, load_local_analysis_results};
-pub use global_analysis::{DumpingGlobalAnalysis, GlobalAnalysis};
-pub use local_analysis::{CachedBody, CachedBodyAnalysis, LocalAnalysis};
-pub use reachability::{collect_mono_items_from, Usage, UsedMonoItem};
-pub use refiner::{refine_from, TaintedNode};
-pub use utils::substituted_mir;
+pub use analysis::global_analysis::GlobalAnalysis;
+pub use analysis::local_analysis::LocalAnalysis;
+pub use reachability::{collect_from, Node, Usage, UsageGraph};
+pub use refiner::{refine_from, RefinedNode, RefinedUsageGraph, TaintedNode};
 
 fn get_default_rustc_target() -> Result<String, String> {
     const RUSTC_COMMAND: &str = "rustc";
@@ -135,7 +132,7 @@ impl<A: for<'a> LocalAnalysis<'a>> rustc_driver::Callbacks for LocalAnalysisCall
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_local_analysis_results(tcx, &self.local_analysis);
+            self.local_analysis.dump_local_analysis_results(tcx);
         });
         rustc_driver::Compilation::Continue
     }
@@ -170,7 +167,7 @@ impl<G: for<'a> GlobalAnalysis<'a>, A: for<'a> LocalAnalysis<'a>> rustc_driver::
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_local_analysis_results(tcx, &self.local_analysis);
+            self.local_analysis.dump_local_analysis_results(tcx);
         });
         rustc_driver::Compilation::Continue
     }
@@ -183,6 +180,6 @@ impl<G: for<'a> GlobalAnalysis<'a>, A: for<'a> LocalAnalysis<'a>> rustc_driver::
         queries
             .global_ctxt()
             .unwrap()
-            .enter(|tcx| self.global_analysis.construct(tcx))
+            .enter(|tcx| self.global_analysis.perform_analysis(tcx))
     }
 }

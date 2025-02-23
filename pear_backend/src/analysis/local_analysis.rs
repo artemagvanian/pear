@@ -1,17 +1,55 @@
+use std::marker::Sized;
 use std::path::PathBuf;
 
 use rustc_hir::{
     def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
-
-use crate::{
-    caching::encoder::{decode_from_file, encode_to_file},
-    local_analysis::LocalAnalysis,
+use rustc_middle::{
+    hir::nested_filter::OnlyBodies,
+    ty::TyCtxt,
 };
+use rustc_serialize::{Decodable, Encodable};
 
-/// A visitor to collect all bodies in the crate and write them to disk.
+use crate::caching::{decode_from_file, encode_to_file, PearDecoder, PearEncoder};
+
+pub trait LocalAnalysis<'tcx> {
+    type Output: Encodable<PearEncoder<'tcx>> + for<'a> Decodable<PearDecoder<'tcx, 'a>>;
+
+    fn perform_analysis(&self, tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self::Output;
+
+    /// Try to load previously saved analysis results for a given DefId.
+    fn load_local_analysis_results(tcx: TyCtxt<'tcx>, def_id: DefId) -> Result<Self::Output, String>
+    where
+        Self: Sized,
+    {
+        let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
+        for path in &paths {
+            let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
+            if let Ok(data) = decode_from_file(tcx, path) {
+                return Ok(data);
+            };
+        }
+        return Err(format!(
+            "No facts for {def_id:?} found at any path tried: {paths:?}"
+        ));
+    }
+
+    /// Construct and save all local analysis results.
+    fn dump_local_analysis_results(&self, tcx: TyCtxt<'tcx>)
+    where
+        Self: Sized,
+    {
+        let mut vis = DumpingVisitor {
+            tcx,
+            target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
+            analysis: self,
+        };
+        tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+    }
+}
+
+/// A visitor to perform all local analyses in the crate and write the results to disk.
 struct DumpingVisitor<'tcx, 'a, A: LocalAnalysis<'tcx>> {
     tcx: TyCtxt<'tcx>,
     target_dir: PathBuf,
@@ -32,7 +70,7 @@ impl<'tcx, 'a, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisi
         _: rustc_span::Span,
         local_def_id: LocalDefId,
     ) {
-        let to_write = self.analysis.construct(self.tcx, local_def_id);
+        let to_write = self.analysis.perform_analysis(self.tcx, local_def_id);
 
         let dir = &self.target_dir;
         let path = dir.join(
@@ -57,21 +95,6 @@ impl<'tcx, 'a, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisi
     }
 }
 
-/// A complete visit over the local crate items, collecting all bodies and
-/// calculating the necessary borrowcheck facts to store for later points-to
-/// analysis.
-///
-/// Ensure this gets called early in the compiler before the unoptimized mir
-/// bodies are stolen.
-pub fn dump_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(tcx: TyCtxt<'tcx>, analysis: &A) {
-    let mut vis = DumpingVisitor {
-        tcx,
-        target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
-        analysis,
-    };
-    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
-}
-
 const INTERMEDIATE_ARTIFACT_EXT: &str = "pear_cache";
 
 /// Get the path where artifacts from this crate would be stored. Unlike
@@ -86,23 +109,6 @@ fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<PathBuf
             .map(|p| p.with_extension(ext))
             .collect()
     }
-}
-
-/// Try to load a [`CachedBody`] for this id.
-pub fn load_local_analysis_results<'tcx, A: LocalAnalysis<'tcx>>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Result<A::Out, String> {
-    let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
-    for path in &paths {
-        let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
-        if let Ok(data) = decode_from_file(tcx, path) {
-            return Ok(data);
-        };
-    }
-    return Err(format!(
-        "No facts for {def_id:?} found at any path tried: {paths:?}"
-    ));
 }
 
 /// Create the name of the file in which to store intermediate artifacts.
