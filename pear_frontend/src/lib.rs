@@ -1,5 +1,6 @@
 #![feature(rustc_private, box_patterns, min_specialization)]
 
+extern crate rustc_borrowck;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_interface;
