@@ -1,0 +1,2 @@
+<kani::dyn_trait::vtable_duplicate_fields::S as kani::dyn_trait::vtable_duplicate_fields::A>::foo
+<kani::dyn_trait::vtable_duplicate_fields::S as kani::dyn_trait::vtable_duplicate_fields::B>::foo

@@ -1,0 +1,1 @@
+<kani::dyn_trait::boxed_display_cast::Concrete as std::fmt::Display>::fmt

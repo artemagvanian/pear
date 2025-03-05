@@ -1,0 +1,2 @@
+<() as kani::dyn_trait::generic_duplicate_names::Foo<i32>>::method
+<() as kani::dyn_trait::generic_duplicate_names::Foo<u32>>::method

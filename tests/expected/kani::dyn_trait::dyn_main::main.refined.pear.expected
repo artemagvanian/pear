@@ -1,0 +1,2 @@
+<kani::dyn_trait::dyn_main::Sheep as kani::dyn_trait::dyn_main::Animal>::noise
+<kani::dyn_trait::dyn_main::Cow as kani::dyn_trait::dyn_main::Animal>::noise

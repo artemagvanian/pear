@@ -1,0 +1,1 @@
+<u8 as kani::dyn_trait::unsized_ref_cast::Byte>::eq

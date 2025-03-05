@@ -1,5 +1,7 @@
 use std::fs;
 
+use colored::Colorize;
+use itertools::Itertools;
 use regex::Regex;
 use rustc_hir::ItemKind;
 use rustc_middle::{
@@ -8,11 +10,7 @@ use rustc_middle::{
 };
 use rustc_span::Symbol;
 
-use crate::{reachability::collect_mono_items_from, refiner::refine_from};
-
-pub trait GlobalAnalysis<'tcx> {
-    fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation;
-}
+use pear_backend::{collect_from, refine_from, GlobalAnalysis, RefinedUsageGraph};
 
 pub struct DumpingGlobalAnalysis {
     filter: Option<Regex>,
@@ -44,7 +42,11 @@ pub fn contains_non_concrete_type<'tcx>(ty: Ty<'tcx>) -> bool {
 /// Dumps the usage map from each entry function to a file.
 /// Loads MIR [`Body`]s retrieved during LocalAnalysis via call to substituted_mir(). `
 impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
-    fn construct(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+    fn perform_analysis(&self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+        colored::control::set_override(true);
+
+        println!("{}", "Starting PEAR analysis.".blue().bold());
+
         let pear_entry_attribute = [Symbol::intern("pear"), Symbol::intern("analysis_entry")];
         let hir = tcx.hir();
 
@@ -91,24 +93,57 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 }
 
                 let (items, usage_map) =
-                    collect_mono_items_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
+                    collect_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
 
+                let serialized_collection_results = serde_json::to_string_pretty(&usage_map)
+                    .expect("failed to serialize collection results");
                 fs::write(
                     format!("{def_path_str}.pear.json"),
-                    serde_json::to_string_pretty(&usage_map)
-                        .expect("failed to serialize collection results"),
+                    serialized_collection_results,
                 )
                 .expect("failed to write collection results to a file");
 
                 let refined_usage_graph = refine_from(instance, items, tcx);
+                let serialized_refinement_results =
+                    serde_json::to_string_pretty(&refined_usage_graph)
+                        .expect("failed to serialize refinement results");
+
+                if let Ok(bytes) =
+                    fs::read(format!("expected/{def_path_str}.refined.pear.expected"))
+                {
+                    let expected =
+                        String::from_utf8(bytes).expect("failed to parse the expected file");
+                    run_test(&def_path_str, &refined_usage_graph, &expected);
+                }
+
                 fs::write(
                     format!("{def_path_str}.refined.pear.json"),
-                    serde_json::to_string_pretty(&refined_usage_graph)
-                        .expect("failed to serialize refinement results"),
+                    serialized_refinement_results,
                 )
                 .expect("failed to write refinement results to a file");
             }
         }
+        colored::control::unset_override();
         rustc_driver::Compilation::Continue
     }
+}
+
+fn run_test(def_path_str: &str, refined_usage_graph: &RefinedUsageGraph, expected: &str) {
+    println!("{}", format!("  [{def_path_str}]").blue().bold(),);
+    let instances = refined_usage_graph
+        .instances()
+        .into_iter()
+        .map(|instance| instance.to_string())
+        .collect_vec();
+    for line in expected.lines() {
+        if !instances.contains(&String::from(line)) {
+            println!("{}", "    Test failed.".red().bold());
+            println!(
+                "{}",
+                format!("      {line} is not present in the refined graph.").red()
+            );
+            return;
+        }
+    }
+    println!("{}", "    Test passed.".green());
 }

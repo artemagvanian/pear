@@ -1,5 +1,3 @@
-mod caching;
 mod encoder;
 
-pub use caching::{dump_local_analysis_results, load_local_analysis_results};
-pub use encoder::{PearDecoder, PearEncoder};
+pub use encoder::{decode_from_file, encode_to_file, PearDecoder, PearEncoder};

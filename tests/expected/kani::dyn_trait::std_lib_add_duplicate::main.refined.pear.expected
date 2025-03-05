@@ -1,0 +1,1 @@
+<i32 as kani::dyn_trait::std_lib_add_duplicate::WeirdAdd>::add
