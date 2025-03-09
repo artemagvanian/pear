@@ -57,7 +57,7 @@ impl<'tcx> RefinedNode<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct TaintedNode<'tcx> {
     node: Instance<'tcx>,
     span: Span,
@@ -110,6 +110,10 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             forward_edges: FxHashMap::default(),
             backward_edges: FxHashMap::default(),
         }
+    }
+
+    pub fn root(&self) -> Instance<'tcx> {
+        self.root
     }
 
     fn add_edge(&mut self, from: &Instance<'tcx>, to: &RefinedNode<'tcx>) {
