@@ -293,7 +293,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             
             if !stack.contains(&updated_parent.node) {
                 stack.push(updated_parent.node);
-                self.find_parent_subgraph_rec(
+                self.find_child_subgraph_rec(
                     &updated_parent.node,
                     filter,
                     tcx,
@@ -317,7 +317,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
     ) -> Vec<TransitiveRefinedNode<'tcx>> {
-        let subgraph = self.find_parent_subgraph(&instance, filter, tcx); 
+        let subgraph = self.find_child_subgraph(&instance, filter, tcx); 
         subgraph.crate_boundaries 
     }
 }
