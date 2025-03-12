@@ -232,7 +232,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
     fn find_child_subgraph_rec(
         &self,
         instance: &Instance<'tcx>,
-        filter: &Vec<String>,
+        filter: &Vec<String>, //Vec<Filtered::Crate(String) or Filtered::Crate(FnName)
         tcx: TyCtxt<'tcx>,
         instance_refined: bool,
         tainted_parents: &FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>>,
@@ -250,6 +250,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
 
         // don't recur into crates that are filtered
         if filter.iter().any(|filtered_item| {
+            // match filtered_item crate or fn 
             tcx.crate_name(instance.def_id().krate)
                 .to_string()
                 .contains(filtered_item)
