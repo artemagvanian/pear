@@ -16,6 +16,7 @@ venv/
 *.pear.json
 *.pear.log
 *.pear.svg
+*.mir.rs
 
 # macOS stuff
 .DS_Store

@@ -24,3 +24,5 @@ clap = { version = "4.5", features = ["derive"] }
 itertools = { version = "0.14" }
 
 colored = { version = "2.2" }
+
+toml = { version = "0.8" }

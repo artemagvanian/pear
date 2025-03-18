@@ -1,5 +1,6 @@
 mod leaky_flows {
-    fn implicit_leak(sensitive_arg: i32) {
+    #[pear::scrutinizer_impure]
+    pub fn implicit_leak(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.
         if sensitive_arg > 0 {
@@ -8,7 +9,8 @@ mod leaky_flows {
         println!("{}", variable);
     }
 
-    fn reassignment_leak(sensitive_arg: i32) {
+    #[pear::scrutinizer_impure]
+    pub fn reassignment_leak(sensitive_arg: i32) {
         let mut variable = sensitive_arg;
         // Implicit flow.
         if variable > 0 {
@@ -21,7 +23,8 @@ mod leaky_flows {
 mod arc_leak {
     use std::sync::{Arc, Mutex};
 
-    fn arc_leak(sensitive_arg: i32) {
+    #[pear::scrutinizer_impure]
+    pub fn arc_leak(sensitive_arg: i32) {
         let sensitive_arc = Arc::new(Mutex::new(sensitive_arg));
         let sensitive_arc_copy = sensitive_arc.clone();
         let unwrapped = *sensitive_arc_copy.lock().unwrap();
@@ -30,7 +33,8 @@ mod arc_leak {
 }
 
 mod tricky_flows {
-    fn implicit_leak(sensitive_arg: i32) {
+    #[pear::scrutinizer_impure]
+    pub fn implicit_leak(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.
         if variable > 0 {
@@ -46,7 +50,8 @@ mod tricky_flows {
 }
 
 mod non_leaky_flows {
-    fn foo(sensitive_arg: i32) {
+    #[pear::scrutinizer_pure]
+    pub fn foo(sensitive_arg: i32) {
         let mut variable = 1;
         // Implicit flow.
         if variable > 0 {

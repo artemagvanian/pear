@@ -14,7 +14,7 @@ use rustc_span::Span;
 use serde::Serialize;
 
 use crate::{
-    reachability::{ImplType, Usage, Node},
+    reachability::{ImplType, Node, Usage},
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
     serialize::{
         serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
@@ -110,6 +110,17 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             forward_edges: FxHashMap::default(),
             backward_edges: FxHashMap::default(),
         }
+    }
+
+    pub fn root(&self) -> Instance<'tcx> {
+        self.root
+    }
+
+    pub fn get_forward_edges(&self, instance: &Instance<'tcx>) -> FxHashSet<RefinedNode<'tcx>> {
+        self.forward_edges
+            .get(instance)
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn add_edge(&mut self, from: &Instance<'tcx>, to: &RefinedNode<'tcx>) {
@@ -266,11 +277,7 @@ pub struct RefinerVisitor<'tcx> {
 }
 
 impl<'tcx> RefinerVisitor<'tcx> {
-    pub fn new(
-        root: Instance<'tcx>,
-        reachable: FxHashSet<Node<'tcx>>,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
+    pub fn new(root: Instance<'tcx>, reachable: FxHashSet<Node<'tcx>>, tcx: TyCtxt<'tcx>) -> Self {
         // We do not instantiate and normalize body just yet but do it lazily instead to support
         // partially parametric instances.
         let root_body = tcx.instance_mir(root.def).clone();
