@@ -3,12 +3,10 @@ use std::fs;
 use colored::Colorize;
 use regex::Regex;
 use rustc_ast::Mutability;
-use rustc_hir::ItemKind;
 use rustc_middle::{
     mir::mono::MonoItem,
     ty::{self, FnSig, Ty, TyCtxt},
 };
-use rustc_span::Symbol;
 
 use pear_backend::{collect_from, refine_from, GlobalAnalysis};
 use serde::{Deserialize, Serialize};
@@ -17,6 +15,7 @@ use crate::analysis::scrutinizer::{
     analyzer::{self, ImpurityReason, PurityAnalysisResult},
     important,
     scrutinizer_local::substituted_mir,
+    selector::{select_functions, select_pprs},
     utils::instance_sig,
 };
 
@@ -92,35 +91,24 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
 
         println!("{}", "Starting PEAR-Scrutinizer analysis.".blue().bold());
 
-        let scrutinizer_pure_attribute =
-            [Symbol::intern("pear"), Symbol::intern("scrutinizer_pure")];
+        let config: ScrutinizerConfig = fs::read("scrutinizer-config.toml")
+            .map(|config_bytes| {
+                String::from_utf8(config_bytes).expect("failed to parse the expected file")
+            })
+            .map(|config_str| toml::from_str(&config_str).expect("failed to parse TOML config"))
+            .expect("failed to read config file");
 
-        let scrutinizer_impure_attribute =
-            [Symbol::intern("pear"), Symbol::intern("scrutinizer_impure")];
+        let analysis_targets = if config.mode == "function" {
+            select_functions(tcx)
+        } else if config.mode == "ppr" {
+            select_pprs(tcx)
+        } else {
+            panic!("unknown mode");
+        };
 
-        let hir = tcx.hir();
-
-        for item_id in tcx.hir().items() {
-            let item = hir.item(item_id);
-            let def_id = item.owner_id.to_def_id();
+        for (analysis_target, annotated_pure) in analysis_targets {
+            let def_id = analysis_target.def_id();
             let def_path_str = tcx.def_path_str(def_id);
-
-            let annotated_pure;
-            if tcx
-                .get_attrs_by_path(def_id, &scrutinizer_pure_attribute)
-                .next()
-                .is_some()
-            {
-                annotated_pure = true;
-            } else if tcx
-                .get_attrs_by_path(def_id, &scrutinizer_impure_attribute)
-                .next()
-                .is_some()
-            {
-                annotated_pure = false;
-            } else {
-                continue;
-            }
 
             if !self
                 .filter
@@ -131,128 +119,113 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                 continue;
             }
 
-            if let ItemKind::Fn(..) = &item.kind {
-                let instance =
-                    ty::Instance::new(def_id, ty::GenericArgs::identity_for_item(tcx, def_id));
+            let instance_sig: FnSig = instance_sig(analysis_target, tcx);
 
-                let instance_sig: FnSig = instance_sig(instance, tcx);
+            let purity_analysis_result = if instance_sig
+                .inputs_and_output
+                .iter()
+                .any(|ty| contains_non_concrete_type(ty))
+            {
+                PurityAnalysisResult::error(
+                    def_id,
+                    Some(ImpurityReason::UnresolvedGenerics),
+                    annotated_pure,
+                )
+            } else if instance_sig.inputs().iter().any(|ty| is_mutable_ref(*ty)) {
+                PurityAnalysisResult::error(
+                    def_id,
+                    Some(ImpurityReason::MutableArguments),
+                    annotated_pure,
+                )
+            } else {
+                let (items, _) = collect_from(tcx, MonoItem::Fn(analysis_target), false);
 
-                let purity_analysis_result = if instance_sig
-                    .inputs_and_output
-                    .iter()
-                    .any(|ty| contains_non_concrete_type(ty))
-                {
-                    PurityAnalysisResult::error(
-                        def_id,
-                        Some(ImpurityReason::UnresolvedGenerics),
-                        annotated_pure,
-                    )
-                } else if instance_sig.inputs().iter().any(|ty| is_mutable_ref(*ty)) {
-                    PurityAnalysisResult::error(
-                        def_id,
-                        Some(ImpurityReason::MutableArguments),
-                        annotated_pure,
-                    )
-                } else {
-                    let (items, _) = collect_from(tcx, MonoItem::Fn(instance), false);
+                let refined_usage_graph = refine_from(analysis_target, items, tcx);
 
-                    let refined_usage_graph = refine_from(instance, items, tcx);
-
-                    let config: ScrutinizerConfig = fs::read("scrutinizer-config.toml")
-                        .map(|config_bytes| {
-                            String::from_utf8(config_bytes)
-                                .expect("failed to parse the expected file")
-                        })
-                        .map(|config_str| {
-                            toml::from_str(&config_str).expect("failed to parse TOML config")
-                        })
-                        .expect("failed to read config file");
-
-                    // Calculate important locals.
-                    let important_locals = {
-                        let body_with_facts = substituted_mir(instance, tcx)
-                            .expect("root object does not have a scrutinizer body");
-                        let (body, _) = body_with_facts.clone().split();
-                        // Parse important arguments.
-                        let important_args = if config.important_args.is_none() {
-                            // If no important arguments are provided, assume all are important.
-                            let arg_count = { body.arg_count };
-                            (1..=arg_count).collect()
-                        } else {
-                            config.important_args.as_ref().unwrap().to_owned()
-                        };
-                        important::ImportantLocals::from_important_args(
-                            important_args,
-                            def_id,
-                            body_with_facts,
-                            tcx,
-                        )
+                // Calculate important locals.
+                let important_locals = {
+                    let body_with_facts = substituted_mir(analysis_target, tcx)
+                        .expect("root object does not have a scrutinizer body");
+                    let (body, _) = body_with_facts.clone().split();
+                    // Parse important arguments.
+                    let important_args = if config.important_args.is_none() {
+                        // If no important arguments are provided, assume all are important.
+                        let arg_count = { body.arg_count };
+                        (1..=arg_count).collect()
+                    } else {
+                        config.important_args.as_ref().unwrap().to_owned()
                     };
-
-                    let allowlist = config
-                        .allowlist
-                        .as_ref()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .map(|re| Regex::new(re).unwrap())
-                        .collect();
-
-                    let trusted_stdlib = config
-                        .trusted_stdlib
-                        .as_ref()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .map(|re| Regex::new(re).unwrap())
-                        .collect();
-
-                    analyzer::run(
-                        refined_usage_graph,
-                        important_locals,
-                        annotated_pure,
-                        &allowlist,
-                        &trusted_stdlib,
+                    important::ImportantLocals::from_important_args(
+                        important_args,
+                        def_id,
+                        body_with_facts,
                         tcx,
                     )
                 };
 
-                if purity_analysis_result.status() != purity_analysis_result.annotated_pure() {
-                    let stencil = format!(
-                        "{def_path_str} failed; status = {} but annotation = {}; reason = {:?}",
-                        purity_analysis_result.status(),
-                        purity_analysis_result.annotated_pure(),
-                        purity_analysis_result.reason()
-                    );
+                let allowlist = config
+                    .allowlist
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .map(|re| Regex::new(re).unwrap())
+                    .collect();
 
-                    println!(
-                        "{}",
-                        match purity_analysis_result.annotated_pure() {
-                            true => stencil.yellow().bold(),
-                            false => stencil.red().bold(),
-                        }
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        format!(
-                            "{def_path_str} passed; status = {} and annotation = {}",
-                            purity_analysis_result.status(),
-                            purity_analysis_result.annotated_pure()
-                        )
-                        .green()
-                        .bold()
-                    );
-                }
+                let trusted_stdlib = config
+                    .trusted_stdlib
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .map(|re| Regex::new(re).unwrap())
+                    .collect();
 
-                let serialized_purity_analysis_result =
-                    serde_json::to_string_pretty(&purity_analysis_result)
-                        .expect("failed to serialize purity analysis results");
-
-                fs::write(
-                    format!("{def_path_str}.purity.pear.json"),
-                    serialized_purity_analysis_result,
+                analyzer::run(
+                    refined_usage_graph,
+                    important_locals,
+                    annotated_pure,
+                    &allowlist,
+                    &trusted_stdlib,
+                    tcx,
                 )
-                .expect("failed to write refinement results to a file");
+            };
+
+            if purity_analysis_result.status() != purity_analysis_result.annotated_pure() {
+                let stencil = format!(
+                    "{def_path_str} failed; status = {} but annotation = {}; reason = {:?}",
+                    purity_analysis_result.status(),
+                    purity_analysis_result.annotated_pure(),
+                    purity_analysis_result.reason()
+                );
+
+                println!(
+                    "{}",
+                    match purity_analysis_result.annotated_pure() {
+                        true => stencil.yellow().bold(),
+                        false => stencil.red().bold(),
+                    }
+                );
+            } else {
+                println!(
+                    "{}",
+                    format!(
+                        "{def_path_str} passed; status = {} and annotation = {}",
+                        purity_analysis_result.status(),
+                        purity_analysis_result.annotated_pure()
+                    )
+                    .green()
+                    .bold()
+                );
             }
+
+            let serialized_purity_analysis_result =
+                serde_json::to_string_pretty(&purity_analysis_result)
+                    .expect("failed to serialize purity analysis results");
+
+            fs::write(
+                format!("{def_path_str}.purity.pear.json"),
+                serialized_purity_analysis_result,
+            )
+            .expect("failed to write refinement results to a file");
         }
         colored::control::unset_override();
         rustc_driver::Compilation::Continue

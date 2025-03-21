@@ -96,18 +96,18 @@ impl<'tcx> ScrutinizerBody<'tcx> {
         }
     }
 
-    pub fn get_args_by_call_span(&self, span: Span) -> Vec<Operand<'tcx>> {
+    pub fn get_args_by_call_span(&self, needle: Span) -> Vec<Vec<Operand<'tcx>>> {
         self.body
             .basic_blocks
             .iter()
-            .find_map(|bb| match &bb.terminator().kind {
+            .filter_map(|bb| match &bb.terminator().kind {
                 TerminatorKind::Call { fn_span, args, .. } => {
-                    (span.source_equal(*fn_span)).then_some(args)
+                    (needle.source_equal(*fn_span)).then_some(args)
                 }
                 _ => None,
             })
-            .unwrap()
-            .clone()
+            .cloned()
+            .collect()
     }
 }
 

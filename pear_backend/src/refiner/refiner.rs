@@ -525,7 +525,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
 }
 
 impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, _location: Location) {
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         match &terminator.kind {
             TerminatorKind::Call {
                 func,
@@ -539,6 +539,7 @@ impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
                 // TODO: visit other terminators, such as `Drop` or `Assert`.
             }
         }
+        self.super_terminator(terminator, location);
     }
 }
 

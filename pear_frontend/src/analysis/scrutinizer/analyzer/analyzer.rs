@@ -144,38 +144,19 @@ fn analyze_item<'tcx>(
                                 .clone()
                                 .unwrap()
                                 .get_args_by_call_span(child_node.span());
-                            let new_important_locals = important_locals.transition(
-                                &args,
-                                child_item,
-                                child_scrutinizer_body.clone().ok(),
-                                tcx,
-                            );
-                            match child_scrutinizer_body {
-                                Ok(child_scrutinizer_body) => {
-                                    stack.push(child_item);
-                                    let result = analyze_item(
-                                        child_item,
-                                        Some(child_scrutinizer_body),
-                                        new_important_locals,
-                                        passing_calls_ref,
-                                        failing_calls_ref,
-                                        storage,
-                                        allowlist,
-                                        trusted_stdlib,
-                                        stack,
-                                        tcx,
-                                    );
-                                    stack.pop();
-                                    result
-                                }
-                                Err(err_kind) => match err_kind {
-                                    SubstitutedMirErrorKind::UnimportantMir => true,
-                                    SubstitutedMirErrorKind::NoCallableMir
-                                    | SubstitutedMirErrorKind::NoMirFound => {
+                            args.into_iter().all(|args| {
+                                let new_important_locals = important_locals.transition(
+                                    &args,
+                                    child_item,
+                                    child_scrutinizer_body.clone().ok(),
+                                    tcx,
+                                );
+                                match child_scrutinizer_body.clone() {
+                                    Ok(child_scrutinizer_body) => {
                                         stack.push(child_item);
                                         let result = analyze_item(
                                             child_item,
-                                            None,
+                                            Some(child_scrutinizer_body),
                                             new_important_locals,
                                             passing_calls_ref,
                                             failing_calls_ref,
@@ -188,8 +169,29 @@ fn analyze_item<'tcx>(
                                         stack.pop();
                                         result
                                     }
-                                },
-                            }
+                                    Err(err_kind) => match err_kind {
+                                        SubstitutedMirErrorKind::UnimportantMir => true,
+                                        SubstitutedMirErrorKind::NoCallableMir
+                                        | SubstitutedMirErrorKind::NoMirFound => {
+                                            stack.push(child_item);
+                                            let result = analyze_item(
+                                                child_item,
+                                                None,
+                                                new_important_locals,
+                                                passing_calls_ref,
+                                                failing_calls_ref,
+                                                storage,
+                                                allowlist,
+                                                trusted_stdlib,
+                                                stack,
+                                                tcx,
+                                            );
+                                            stack.pop();
+                                            result
+                                        }
+                                    },
+                                }
+                            })
                         }
                     })
                     .collect_vec()
@@ -274,6 +276,7 @@ fn dump_body<'tcx>(
     tcx: TyCtxt<'tcx>,
 ) {
     let (body, _) = scrutinizer_body.split();
+    fs::create_dir_all("bodies").expect("failed to create bodies dir");
     fs::write(
         format!("bodies/{}.mir.rs", tcx.def_path_str(item.def_id())),
         body.to_string(tcx).unwrap(),
