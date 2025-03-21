@@ -217,18 +217,17 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
 
                 if purity_analysis_result.status() != purity_analysis_result.annotated_pure() {
                     let stencil = format!(
-                        "{def_path_str} failed; status = {} but annotation = {}",
+                        "{def_path_str} failed; status = {} but annotation = {}; reason = {:?}",
                         purity_analysis_result.status(),
-                        purity_analysis_result.annotated_pure()
+                        purity_analysis_result.annotated_pure(),
+                        purity_analysis_result.reason()
                     );
 
                     println!(
                         "{}",
-                        match purity_analysis_result.reason() {
-                            Some(ImpurityReason::MutableArguments)
-                            | Some(ImpurityReason::UnresolvedGenerics) => stencil.yellow().bold(),
-                            Some(ImpurityReason::ImpureInnerFunction) | None =>
-                                stencil.red().bold(),
+                        match purity_analysis_result.annotated_pure() {
+                            true => stencil.yellow().bold(),
+                            false => stencil.red().bold(),
                         }
                     );
                 } else {
