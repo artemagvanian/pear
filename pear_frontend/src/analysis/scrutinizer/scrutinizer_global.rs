@@ -12,7 +12,7 @@ use pear_backend::{collect_from, refine_from, GlobalAnalysis};
 use serde::{Deserialize, Serialize};
 
 use crate::analysis::scrutinizer::{
-    analyzer::{self, ImpurityReason, PurityAnalysisResult},
+    analyzer::{ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
     important,
     scrutinizer_local::substituted_mir,
     selector::{select_functions, select_pprs},
@@ -179,12 +179,12 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                     .map(|re| Regex::new(re).unwrap())
                     .collect();
 
-                analyzer::run(
+                ScrutinizerAnalysis::run(
                     refined_usage_graph,
                     important_locals,
                     annotated_pure,
-                    &allowlist,
-                    &trusted_stdlib,
+                    allowlist,
+                    trusted_stdlib,
                     tcx,
                 )
             };

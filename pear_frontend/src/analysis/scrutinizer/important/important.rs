@@ -35,6 +35,10 @@ impl Serialize for ImportantLocals {
 }
 
 impl ImportantLocals {
+    pub fn new(locals: HashSet<Local>) -> Self {
+        Self { locals }
+    }
+
     pub fn from_important_args<'tcx>(
         important_args: Vec<usize>,
         def_id: DefId,

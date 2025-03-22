@@ -47,6 +47,27 @@ mod tricky_flows {
         // This call needs to be revisited.
         println!("{}", variable);
     }
+
+    fn leaker(a: *const i32) {
+        unsafe {
+            *(a as *mut _) = 42;
+        }
+    }
+
+    #[pear::scrutinizer_impure]
+    pub fn implicit_transmute(sensitive_arg: i32) {
+        let mut variable = 1;
+        // Implicit flow.
+        if variable > 0 {
+            variable = 2;
+        }
+        leaker(&variable as *const _);
+        if sensitive_arg > 0 {
+            variable = 2;
+        }
+        // This call needs to be revisited.
+        leaker(&variable as *const _);
+    }
 }
 
 mod non_leaky_flows {

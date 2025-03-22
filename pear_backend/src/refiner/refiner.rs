@@ -2,15 +2,15 @@ use log::warn;
 use std::fs;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def_id::DefId, LangItem};
 use rustc_middle::{
-    mir::{visit::Visitor, Body, Location, Operand, Terminator, TerminatorKind},
+    mir::{visit::Visitor, Body, Location, Terminator, TerminatorKind},
     ty::{
-        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, TyCtxt, TyKind,
-        TypeFoldable,
+        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, Ty, TyCtxt,
+        TyKind, TypeFoldable,
     },
 };
-use rustc_span::Span;
+use rustc_span::{Span, DUMMY_SP};
 use serde::Serialize;
 
 use crate::{
@@ -29,12 +29,16 @@ pub enum RefinedNode<'tcx> {
         instance: Instance<'tcx>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
+        #[serde(skip_serializing)]
+        call_location: Location,
     },
     Refined {
         #[serde(serialize_with = "serialize_instance_vec")]
         instances: Vec<Instance<'tcx>>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
+        #[serde(skip_serializing)]
+        call_location: Location,
     },
 }
 
@@ -49,6 +53,14 @@ impl<'tcx> RefinedNode<'tcx> {
     pub fn span(&self) -> Span {
         match self {
             Self::Concrete { span, .. } | Self::Refined { span, .. } => *span,
+        }
+    }
+
+    pub fn location(&self) -> Location {
+        match self {
+            Self::Concrete { call_location, .. } | Self::Refined { call_location, .. } => {
+                *call_location
+            }
         }
     }
 
@@ -427,11 +439,9 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .instantiate_mir_and_normalize_erasing_regions(self.tcx, ParamEnv::reveal_all(), v)
     }
 
-    fn refine_rec(&mut self, func: &Operand<'tcx>, _args: &Vec<Operand<'tcx>>, span: Span) {
+    fn refine_rec(&mut self, fn_ty: Ty<'tcx>, span: Span, call_location: Location) {
         // Refine the passed function operand.
-        let fn_ty = self.instantiate_with_current_instance(EarlyBinder::bind(
-            func.ty(&self.current_body, self.tcx),
-        ));
+        let fn_ty = self.instantiate_with_current_instance(EarlyBinder::bind(fn_ty));
 
         let refined = match fn_ty.kind().clone() {
             TyKind::FnDef(def_id, generic_args) => {
@@ -445,8 +455,13 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     InstanceDef::Virtual(method_def_id, ..) => RefinedNode::Refined {
                         instances: self.candidates_for_virtual(method_def_id, instance.args),
                         span,
+                        call_location,
                     },
-                    _ => RefinedNode::Concrete { instance, span },
+                    _ => RefinedNode::Concrete {
+                        instance,
+                        span,
+                        call_location,
+                    },
                 }
             }
             TyKind::FnPtr(poly_fn_sig) => {
@@ -454,6 +469,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                 RefinedNode::Refined {
                     instances: self.candidates_for_fn_ptr(fn_sig),
                     span,
+                    call_location,
                 }
             }
             _ => self.panic_and_dump_call_stack(
@@ -527,16 +543,21 @@ impl<'tcx> RefinerVisitor<'tcx> {
 impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         match &terminator.kind {
-            TerminatorKind::Call {
-                func,
-                args,
-                fn_span,
-                ..
-            } => {
-                self.refine_rec(func, args, *fn_span);
+            TerminatorKind::Call { func, fn_span, .. } => {
+                self.refine_rec(func.ty(&self.current_body, self.tcx), *fn_span, location);
+            }
+            TerminatorKind::Drop { ref place, .. } => {
+                let ty = place.ty(&self.current_body, self.tcx).ty;
+                let def_id = self.tcx.require_lang_item(LangItem::DropInPlace, None);
+                let args = self.tcx.mk_args(&[ty.into()]);
+                self.refine_rec(
+                    self.tcx.type_of(def_id).instantiate(self.tcx, args),
+                    DUMMY_SP,
+                    location,
+                );
             }
             _ => {
-                // TODO: visit other terminators, such as `Drop` or `Assert`.
+                // TODO: visit other terminators, such as `Assert`.
             }
         }
         self.super_terminator(terminator, location);

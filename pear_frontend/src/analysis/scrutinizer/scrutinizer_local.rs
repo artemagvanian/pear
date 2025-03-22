@@ -5,10 +5,9 @@ use rustc_borrowck::consumers::RustcFacts;
 use rustc_hir::{def::DefKind, def_id::LocalDefId};
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{Body, ClearCrossCrate, Operand, StatementKind, TerminatorKind},
+    mir::{Body, ClearCrossCrate, StatementKind},
     ty::{self, Instance, TyCtxt},
 };
-use rustc_span::Span;
 use rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts;
 
 use pear_backend::LocalAnalysis;
@@ -94,20 +93,6 @@ impl<'tcx> ScrutinizerBody<'tcx> {
             body: f(self.body),
             input_facts: self.input_facts,
         }
-    }
-
-    pub fn get_args_by_call_span(&self, needle: Span) -> Vec<Vec<Operand<'tcx>>> {
-        self.body
-            .basic_blocks
-            .iter()
-            .filter_map(|bb| match &bb.terminator().kind {
-                TerminatorKind::Call { fn_span, args, .. } => {
-                    (needle.source_equal(*fn_span)).then_some(args)
-                }
-                _ => None,
-            })
-            .cloned()
-            .collect()
     }
 }
 
