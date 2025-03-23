@@ -71,7 +71,7 @@ mod passthrough_impl_fn {
         move |x| x + a
     }
 
-    #[pear::scrutinizer_pure]
+    #[pear::scrutinizer_impure]
     fn identity<T>(a: T) -> T {
         a
     }

@@ -121,9 +121,9 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
             let instance_sig = instance_sig(analysis_target, tcx);
 
             let purity_analysis_result = if instance_sig
-                .inputs_and_output
+                .inputs()
                 .iter()
-                .any(|ty| contains_non_concrete_type(ty))
+                .any(|ty| contains_non_concrete_type(*ty))
             {
                 PurityAnalysisResult::error(
                     def_id,

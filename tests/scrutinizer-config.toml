@@ -182,6 +182,8 @@ allowlist = [
   # Impls of global allocator.
   'alloc\[\w*\]::alloc::\{impl#0\}',
   'alloc\[\w*\]::alloc::\{impl#1\}',
+  # Alloc error handler.
+  'alloc\[\w*\]::alloc::\{extern#1\}::__rust_alloc_error_handler',
 
   # Format chrono.
   'chrono\[\w*\]::naive::datetime::\{impl#0\}::format',

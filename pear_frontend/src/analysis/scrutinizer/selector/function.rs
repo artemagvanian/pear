@@ -1,5 +1,5 @@
 use rustc_hir::ItemKind;
-use rustc_middle::ty::{self, TyCtxt};
+use rustc_middle::ty::{self, GenericArgs, TyCtxt};
 use rustc_span::Symbol;
 
 pub fn select_functions<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<(ty::Instance<'tcx>, bool)> {
@@ -34,21 +34,10 @@ pub fn select_functions<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<(ty::Instance<'tcx>, boo
             }
 
             if let ItemKind::Fn(..) = &item.kind {
-                // Sanity check for generics.
-                let has_generics =
-                    ty::GenericArgs::identity_for_item(tcx, def_id)
-                        .iter()
-                        .any(|param| match param.unpack() {
-                            ty::GenericArgKind::Lifetime(..) => false,
-                            ty::GenericArgKind::Type(..) | ty::GenericArgKind::Const(..) => true,
-                        });
-
-                if has_generics {
-                    return None;
-                }
-
                 // Retrieve the instance, as we know it exists.
-                Some((ty::Instance::mono(tcx, def_id), annotated_pure))
+                let args = GenericArgs::identity_for_item(tcx, def_id);
+                let instance = ty::Instance::new(def_id, args);
+                Some((instance, annotated_pure))
             } else {
                 None
             }
