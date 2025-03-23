@@ -4,8 +4,8 @@ use colored::Colorize;
 use regex::Regex;
 use rustc_ast::Mutability;
 use rustc_middle::{
-    mir::mono::MonoItem,
-    ty::{self, FnSig, Ty, TyCtxt},
+    mir::{mono::MonoItem, Local},
+    ty::{self, Ty, TyCtxt},
 };
 
 use pear_backend::{collect_from, refine_from, GlobalAnalysis};
@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::analysis::scrutinizer::{
     analyzer::{ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
-    important,
     scrutinizer_local::substituted_mir,
     selector::{select_functions, select_pprs},
     utils::instance_sig,
@@ -108,7 +107,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
 
         for (analysis_target, annotated_pure) in analysis_targets {
             let def_id = analysis_target.def_id();
-            let def_path_str = tcx.def_path_str(def_id);
+            let mut def_path_str = tcx.def_path_str(def_id);
 
             if !self
                 .filter
@@ -119,7 +118,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                 continue;
             }
 
-            let instance_sig: FnSig = instance_sig(analysis_target, tcx);
+            let instance_sig = instance_sig(analysis_target, tcx);
 
             let purity_analysis_result = if instance_sig
                 .inputs_and_output
@@ -142,8 +141,8 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
 
                 let refined_usage_graph = refine_from(analysis_target, items, tcx);
 
-                // Calculate important locals.
-                let important_locals = {
+                // Calculate important arguments.
+                let important_args = {
                     let body_with_facts = substituted_mir(analysis_target, tcx)
                         .expect("root object does not have a scrutinizer body");
                     let (body, _) = body_with_facts.clone().split();
@@ -155,12 +154,10 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                     } else {
                         config.important_args.as_ref().unwrap().to_owned()
                     };
-                    important::ImportantLocals::from_important_args(
-                        important_args,
-                        def_id,
-                        body_with_facts,
-                        tcx,
-                    )
+                    important_args
+                        .into_iter()
+                        .map(|arg_num| Local::from_usize(arg_num))
+                        .collect()
                 };
 
                 let allowlist = config
@@ -181,7 +178,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
 
                 ScrutinizerAnalysis::run(
                     refined_usage_graph,
-                    important_locals,
+                    important_args,
                     annotated_pure,
                     allowlist,
                     trusted_stdlib,
@@ -221,11 +218,12 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                 serde_json::to_string_pretty(&purity_analysis_result)
                     .expect("failed to serialize purity analysis results");
 
+            def_path_str.truncate(128);
             fs::write(
                 format!("{def_path_str}.purity.pear.json"),
                 serialized_purity_analysis_result,
             )
-            .expect("failed to write refinement results to a file");
+            .expect("failed to write purity analysis results to a file");
         }
         colored::control::unset_override();
         rustc_driver::Compilation::Continue

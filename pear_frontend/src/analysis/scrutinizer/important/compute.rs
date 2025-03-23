@@ -1,9 +1,7 @@
-use std::iter::once;
-
-use either::Either;
+use itertools::Itertools;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{Body, Local, Place, StatementKind, TerminatorKind},
+    mir::{Body, Local, Terminator, TerminatorKind},
     ty::TyCtxt,
 };
 
@@ -17,13 +15,12 @@ use rustc_utils::mir::location_or_arg::LocationOrArg;
 use crate::analysis::scrutinizer::scrutinizer_local::ScrutinizerBody;
 
 // This function computes all locals that depend on the argument local for a given def_id.
-pub fn compute_dependent_locals<'tcx>(
-    tcx: TyCtxt<'tcx>,
+pub fn compute_dependent_terminators<'tcx>(
     def_id: DefId,
-    targets: Vec<Vec<(Place<'tcx>, LocationOrArg)>>,
-    direction: Direction,
+    important_args: Vec<Local>,
     body_with_facts: ScrutinizerBody<'tcx>,
-) -> Vec<Local> {
+    tcx: TyCtxt<'tcx>,
+) -> Vec<Terminator<'tcx>> {
     let body_with_facts_ref: &'tcx ScrutinizerBody<'tcx> =
         unsafe { std::mem::transmute(&body_with_facts) };
     let place_info = PlaceInfo::build(tcx, def_id, body_with_facts_ref);
@@ -37,64 +34,58 @@ pub fn compute_dependent_locals<'tcx>(
         engine::iterate_to_fixpoint(tcx, &body, location_domain, analysis)
     };
 
-    log::trace!(
-        "computing location dependencies for {:?}, {:?}",
-        def_id,
-        targets
-    );
-
-    // Use Flowistry to compute the locations and places influenced by the target.
-    let location_deps =
-        flowistry::infoflow::compute_dependencies(&results, targets.clone(), direction)
-            .into_iter()
-            .reduce(|acc, e| {
-                let mut new_acc = acc.clone();
-                new_acc.union(&e);
-                new_acc
-            })
-            .unwrap();
-
-    log::trace!("location deps: {location_deps:?}");
-
-    // Merge location dependencies and extract locals from them.
-    let dependent_locals = location_deps
-        .iter()
-        .map(|dep| match dep {
-            LocationOrArg::Location(location) => {
-                let stmt_or_terminator = body.stmt_at(*location);
-                match stmt_or_terminator {
-                    Either::Left(stmt) => match &stmt.kind {
-                        StatementKind::Assign(assign) => {
-                            let (place, _) = **assign;
-                            vec![place.local]
+    let dependent_terminators = body
+        .basic_blocks
+        .iter_enumerated()
+        .filter_map(|(bb_idx, bb)| {
+            let terminator = bb.terminator();
+            let terminator_loc = body.terminator_loc(bb_idx);
+            match &terminator.kind {
+                TerminatorKind::Call { args, .. } => {
+                    let targets = args
+                        .iter()
+                        .filter_map(|arg| arg.place())
+                        .map(|place| (place, LocationOrArg::Location(terminator_loc)))
+                        .collect_vec();
+                    flowistry::infoflow::compute_dependencies(
+                        &results,
+                        vec![targets],
+                        Direction::Backward,
+                    )[0]
+                    .iter()
+                    .any(|location_or_arg| {
+                        if let LocationOrArg::Arg(local) = *location_or_arg {
+                            important_args.contains(&local)
+                        } else {
+                            false
                         }
-                        _ => {
-                            unimplemented!()
-                        }
-                    },
-                    Either::Right(terminator) => match &terminator.kind {
-                        TerminatorKind::Call {
-                            destination, args, ..
-                        } => once(destination.local)
-                            .chain(
-                                args.iter()
-                                    .filter_map(|arg| arg.place().map(|place| place.local)),
-                            )
-                            .collect(),
-                        TerminatorKind::SwitchInt { .. } => vec![],
-                        _ => {
-                            unimplemented!()
-                        }
-                    },
+                    })
+                    .then_some(terminator.clone())
                 }
+                TerminatorKind::Drop { place, .. } => {
+                    let targets = vec![(*place, LocationOrArg::Location(terminator_loc))];
+                    flowistry::infoflow::compute_dependencies(
+                        &results,
+                        vec![targets],
+                        Direction::Backward,
+                    )[0]
+                    .iter()
+                    .any(|location_or_arg| {
+                        if let LocationOrArg::Arg(local) = *location_or_arg {
+                            important_args.contains(&local)
+                        } else {
+                            false
+                        }
+                    })
+                    .then_some(terminator.clone())
+                }
+                _ => None,
             }
-            LocationOrArg::Arg(local) => vec![*local],
         })
-        .flatten()
         .collect();
 
     drop(body_with_facts);
     drop(body);
 
-    dependent_locals
+    dependent_terminators
 }

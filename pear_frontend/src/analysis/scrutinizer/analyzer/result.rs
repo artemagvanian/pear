@@ -1,21 +1,21 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::Instance;
-use serde::{ser::SerializeStruct, Serialize, Serializer};
-
-use crate::analysis::scrutinizer::important::ImportantLocals;
+use serde::{ser::{SerializeStruct, SerializeTuple}, Serialize, Serializer};
 
 pub fn serialize_instance<S>(instance: &Instance, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_str(instance.to_string().as_str())
+    let mut tup = serializer.serialize_tuple(2)?;
+    tup.serialize_element(instance.to_string().as_str())?;
+    tup.serialize_element(format!("{instance:?}").as_str())?;
+    tup.end()
 }
 
 #[derive(Serialize)]
 pub struct FunctionWithMetadata<'tcx> {
     #[serde(serialize_with = "serialize_instance")]
     function: Instance<'tcx>,
-    important_locals: ImportantLocals,
     raw_pointer_deref: bool,
     allowlisted: bool,
     has_transmute: bool,
@@ -24,14 +24,12 @@ pub struct FunctionWithMetadata<'tcx> {
 impl<'tcx> FunctionWithMetadata<'tcx> {
     pub fn new(
         function: Instance<'tcx>,
-        important_locals: ImportantLocals,
         raw_pointer_deref: bool,
         allowlisted: bool,
         has_transmute: bool,
     ) -> Self {
         FunctionWithMetadata {
             function,
-            important_locals,
             raw_pointer_deref,
             allowlisted,
             has_transmute,

@@ -1,4 +1,3 @@
 mod compute;
-mod important;
 
-pub use important::ImportantLocals;
+pub use compute::compute_dependent_terminators;

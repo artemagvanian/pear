@@ -33,22 +33,6 @@ impl<'a, 'tcx> Visitor<'tcx> for TransmuteVisitor<'tcx> {
         }
         self.super_rvalue(rvalue, location);
     }
-
-    // fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-    //     if let TerminatorKind::Call { func, .. } = &terminator.kind {
-    //         if let Some((def_id, generic_args)) = func.const_fn_def() {
-    //             let def_path_str = format!("{:?}", def_id);
-    //             let transmute_def_path =
-    //                 Regex::new(r"core\[\w*\]::intrinsics::\{extern#0\}::transmute").unwrap();
-    //             if transmute_def_path.is_match(&def_path_str) {
-    //                 if contains_mut_ref(&generic_args[1].as_type().unwrap(), self.tcx) {
-    //                     self.has_transmute = true;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     self.super_terminator(terminator, location);
-    // }
 }
 
 pub fn contains_mut_ref<'tcx>(ty: &Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {

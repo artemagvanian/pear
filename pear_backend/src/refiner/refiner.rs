@@ -29,16 +29,16 @@ pub enum RefinedNode<'tcx> {
         instance: Instance<'tcx>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
-        #[serde(skip_serializing)]
-        call_location: Location,
+        #[serde(serialize_with = "serialize_span")]
+        terminator_span: Span,
     },
     Refined {
         #[serde(serialize_with = "serialize_instance_vec")]
         instances: Vec<Instance<'tcx>>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
-        #[serde(skip_serializing)]
-        call_location: Location,
+        #[serde(serialize_with = "serialize_span")]
+        terminator_span: Span,
     },
 }
 
@@ -56,11 +56,14 @@ impl<'tcx> RefinedNode<'tcx> {
         }
     }
 
-    pub fn location(&self) -> Location {
+    pub fn terminator_span(&self) -> Span {
         match self {
-            Self::Concrete { call_location, .. } | Self::Refined { call_location, .. } => {
-                *call_location
+            Self::Concrete {
+                terminator_span, ..
             }
+            | Self::Refined {
+                terminator_span, ..
+            } => *terminator_span,
         }
     }
 
@@ -439,7 +442,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .instantiate_mir_and_normalize_erasing_regions(self.tcx, ParamEnv::reveal_all(), v)
     }
 
-    fn refine_rec(&mut self, fn_ty: Ty<'tcx>, span: Span, call_location: Location) {
+    fn refine_rec(&mut self, fn_ty: Ty<'tcx>, span: Span, terminator_span: Span) {
         // Refine the passed function operand.
         let fn_ty = self.instantiate_with_current_instance(EarlyBinder::bind(fn_ty));
 
@@ -455,12 +458,12 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     InstanceDef::Virtual(method_def_id, ..) => RefinedNode::Refined {
                         instances: self.candidates_for_virtual(method_def_id, instance.args),
                         span,
-                        call_location,
+                        terminator_span,
                     },
                     _ => RefinedNode::Concrete {
                         instance,
                         span,
-                        call_location,
+                        terminator_span,
                     },
                 }
             }
@@ -469,7 +472,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                 RefinedNode::Refined {
                     instances: self.candidates_for_fn_ptr(fn_sig),
                     span,
-                    call_location,
+                    terminator_span,
                 }
             }
             _ => self.panic_and_dump_call_stack(
@@ -542,9 +545,14 @@ impl<'tcx> RefinerVisitor<'tcx> {
 
 impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        let terminator_span = terminator.source_info.span;
         match &terminator.kind {
             TerminatorKind::Call { func, fn_span, .. } => {
-                self.refine_rec(func.ty(&self.current_body, self.tcx), *fn_span, location);
+                self.refine_rec(
+                    func.ty(&self.current_body, self.tcx),
+                    *fn_span,
+                    terminator_span,
+                );
             }
             TerminatorKind::Drop { ref place, .. } => {
                 let ty = place.ty(&self.current_body, self.tcx).ty;
@@ -553,7 +561,7 @@ impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
                 self.refine_rec(
                     self.tcx.type_of(def_id).instantiate(self.tcx, args),
                     DUMMY_SP,
-                    location,
+                    terminator_span,
                 );
             }
             _ => {

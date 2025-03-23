@@ -1,22 +1,22 @@
 use std::fs;
 
 use itertools::Itertools;
-use pear_backend::{RefinedNode, RefinedUsageGraph};
+use pear_backend::RefinedUsageGraph;
 use regex::Regex;
-use rustc_middle::mir::{Body, Local, Mutability, Operand, TerminatorKind, VarDebugInfoContents};
+use rustc_middle::mir::{Local, Mutability, VarDebugInfoContents};
 use rustc_middle::ty::{Instance, TyCtxt};
 use rustc_span::symbol::Symbol;
-use rustc_span::Span;
 use rustc_utils::BodyExt;
 
-use crate::analysis::scrutinizer::scrutinizer_local::{substituted_mir, SubstitutedMirErrorKind};
-use crate::analysis::scrutinizer::{
-    analyzer::{
-        heuristics::{HasRawPtrDeref, HasTransmute},
-        result::{FunctionWithMetadata, PurityAnalysisResult},
-    },
-    important::ImportantLocals,
+use crate::analysis::scrutinizer::analyzer::{
+    heuristics::{HasRawPtrDeref, HasTransmute},
+    result::{FunctionWithMetadata, PurityAnalysisResult},
 };
+use crate::analysis::scrutinizer::important::compute_dependent_terminators;
+use crate::analysis::scrutinizer::scrutinizer_local::{
+    substituted_mir, ScrutinizerBody, SubstitutedMirErrorKind,
+};
+use crate::analysis::scrutinizer::utils::num_args_for_instance;
 
 use super::result::ImpurityReason;
 
@@ -34,8 +34,8 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
     fn analyze_item(
         &mut self,
         item: Instance<'tcx>,
-        body: Option<Body<'tcx>>,
-        important_locals: ImportantLocals,
+        maybe_body_with_facts: Option<ScrutinizerBody<'tcx>>,
+        important_args: Vec<Local>,
     ) -> bool {
         // Check if allowlisted.
         let is_allowlisted = {
@@ -43,45 +43,21 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             self.allowlist.iter().any(|lib| lib.is_match(&def_path_str))
         };
         if is_allowlisted {
-            let info_with_metadata = FunctionWithMetadata::new(
-                item.to_owned(),
-                important_locals.clone(),
-                false,
-                is_allowlisted,
-                false,
-            );
-            self.passing_calls.push(info_with_metadata);
-            return true;
-        }
-
-        // Check if has no important calls.
-        let has_no_important_locals = important_locals.is_empty();
-        if has_no_important_locals {
-            let info_with_metadata = FunctionWithMetadata::new(
-                item.to_owned(),
-                important_locals.clone(),
-                false,
-                false,
-                false,
-            );
+            let info_with_metadata =
+                FunctionWithMetadata::new(item.to_owned(), false, is_allowlisted, false);
             self.passing_calls.push(info_with_metadata);
             return true;
         }
 
         // Check if has no body (i.e. intrinsic or foreign).
-        let body = match &body {
+        let body_with_facts = match maybe_body_with_facts {
             Some(body) => {
                 dump_body(item, body.clone(), self.tcx);
                 body
             }
             None => {
-                let info_with_metadata = FunctionWithMetadata::new(
-                    item.to_owned(),
-                    important_locals.clone(),
-                    false,
-                    false,
-                    false,
-                );
+                let info_with_metadata =
+                    FunctionWithMetadata::new(item.to_owned(), false, false, false);
                 self.failing_calls.push(info_with_metadata);
                 return false;
             }
@@ -129,7 +105,6 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
         if is_trusted {
             let info_with_metadata = FunctionWithMetadata::new(
                 item.to_owned(),
-                important_locals.clone(),
                 has_raw_pointer_deref,
                 is_allowlisted,
                 has_transmute,
@@ -137,35 +112,65 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             self.passing_calls.push(info_with_metadata);
             true
         } else {
-            // Check if has no leaking calls.
-            let has_no_leaking_calls = self
-                .storage
-                .get_forward_edges(&item)
-                .into_iter()
-                .flat_map(|child_node| {
-                    child_node
-                        .instances()
-                        .into_iter()
-                        .map(|child_item| {
-                            if self.stack.contains(&child_item) {
-                                return true;
-                            } else {
-                                self.analyze_child(
-                                    body.clone(),
-                                    important_locals.clone(),
-                                    child_item,
-                                    child_node.clone(),
-                                )
-                            }
-                        })
-                        .collect_vec()
-                })
-                .all(|r| r);
-
-            if !has_raw_pointer_deref && !has_transmute && has_no_leaking_calls {
+            if has_raw_pointer_deref || has_transmute {
                 let info_with_metadata = FunctionWithMetadata::new(
                     item.to_owned(),
-                    important_locals.clone(),
+                    has_raw_pointer_deref,
+                    is_allowlisted,
+                    has_transmute,
+                );
+                self.failing_calls.push(info_with_metadata);
+                return false;
+            }
+
+            let important_terminators = compute_dependent_terminators(
+                item.def_id(),
+                important_args.clone(),
+                body_with_facts,
+                self.tcx,
+            );
+
+            log::debug!(
+                "computed important terminators for {} from important args {:?} = {:?}",
+                item.to_string(),
+                important_args,
+                important_terminators
+            );
+
+            // Check if has no leaking calls.
+            let has_no_leaking_calls =
+                self.storage
+                    .get_forward_edges(&item)
+                    .into_iter()
+                    .all(|child_node| {
+                        let important_child_node = important_terminators.iter().any(|terminator| {
+                            log::debug!(
+                                "comparing {:?} with {:?}",
+                                terminator.source_info.span,
+                                child_node.terminator_span()
+                            );
+                            terminator
+                                .source_info
+                                .span
+                                .source_equal(child_node.terminator_span())
+                        });
+
+                        if important_child_node {
+                            child_node.instances().into_iter().all(|child_item| {
+                                if self.stack.contains(&child_item) {
+                                    return true;
+                                } else {
+                                    self.analyze_child(child_item)
+                                }
+                            })
+                        } else {
+                            true
+                        }
+                    });
+
+            if has_no_leaking_calls {
+                let info_with_metadata = FunctionWithMetadata::new(
+                    item.to_owned(),
                     has_raw_pointer_deref,
                     is_allowlisted,
                     has_transmute,
@@ -175,7 +180,6 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             } else {
                 let info_with_metadata = FunctionWithMetadata::new(
                     item.to_owned(),
-                    important_locals.clone(),
                     has_raw_pointer_deref,
                     is_allowlisted,
                     has_transmute,
@@ -186,82 +190,57 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
         }
     }
 
-    fn analyze_child(
-        &mut self,
-        parent_body: Body<'tcx>,
-        parent_important_locals: ImportantLocals,
-        child_item: Instance<'tcx>,
-        child_node: RefinedNode<'tcx>,
-    ) -> bool {
-        let child_scrutinizer_body = substituted_mir(child_item, self.tcx);
-        let args = get_args_by_call_span(&parent_body, child_node.span());
-        args.into_iter().all(|args| {
-            let new_important_locals = parent_important_locals.transition(
-                &args,
-                child_item,
-                child_scrutinizer_body.clone().ok(),
-                self.tcx,
-            );
-            match child_scrutinizer_body.clone() {
-                Ok(child_scrutinizer_body) => {
-                    let (child_body, _) = child_scrutinizer_body.split();
-                    self.stack.push(child_item);
-                    let result =
-                        self.analyze_item(child_item, Some(child_body), new_important_locals);
+    fn analyze_child(&mut self, instance: Instance<'tcx>) -> bool {
+        let maybe_body_with_facts = substituted_mir(instance, self.tcx);
+        let important_args = (1..=num_args_for_instance(instance, self.tcx))
+            .map(|arg_num| Local::from_usize(arg_num))
+            .collect_vec();
+
+        match maybe_body_with_facts.clone() {
+            Ok(body_with_facts) => {
+                self.stack.push(instance);
+                let result = self.analyze_item(instance, Some(body_with_facts), important_args);
+                self.stack.pop();
+                result
+            }
+            Err(err_kind) => match err_kind {
+                SubstitutedMirErrorKind::UnimportantMir => {
+                    // Skip analyzing the unimportant mir, check children directly.
+                    self.stack.push(instance);
+                    let result = self
+                        .storage
+                        .get_forward_edges(&instance)
+                        .into_iter()
+                        .flat_map(|child_node| {
+                            child_node
+                                .instances()
+                                .into_iter()
+                                .map(|child_item| {
+                                    if self.stack.contains(&child_item) {
+                                        return true;
+                                    } else {
+                                        self.analyze_child(child_item)
+                                    }
+                                })
+                                .collect_vec()
+                        })
+                        .all(|r| r);
                     self.stack.pop();
                     result
                 }
-                Err(err_kind) => match err_kind {
-                    SubstitutedMirErrorKind::UnimportantMir => {
-                        // Skip analyzing the unimportant mir, check children directly.
-                        let parent_body = self.tcx.instance_mir(child_item.def).clone();
-                        let parent_important_locals = ImportantLocals::new(
-                            (0..parent_body.local_decls.len())
-                                .map(|idx| Local::from_usize(idx))
-                                .collect(),
-                        );
-
-                        self.stack.push(child_item);
-                        let result = self.storage
-                            .get_forward_edges(&child_item)
-                            .into_iter()
-                            .flat_map(|child_node| {
-                                child_node
-                                    .instances()
-                                    .into_iter()
-                                    .map(|child_item| {
-                                        if self.stack.contains(&child_item) {
-                                            return true;
-                                        } else {
-                                            self.analyze_child(
-                                                parent_body.clone(),
-                                                parent_important_locals.clone(),
-                                                child_item,
-                                                child_node.clone(),
-                                            )
-                                        }
-                                    })
-                                    .collect_vec()
-                            })
-                            .all(|r| r);
-                        self.stack.pop();
-                        result
-                    }
-                    SubstitutedMirErrorKind::NoCallableMir
-                    | SubstitutedMirErrorKind::NoMirFound => {
-                        self.stack.push(child_item);
-                        let result = self.analyze_item(child_item, None, new_important_locals);
-                        self.stack.pop();
-                        result
-                    }
-                },
-            }
-        })
+                SubstitutedMirErrorKind::NoCallableMir | SubstitutedMirErrorKind::NoMirFound => {
+                    self.stack.push(instance);
+                    let result = self.analyze_item(instance, None, important_args);
+                    self.stack.pop();
+                    result
+                }
+            },
+        }
     }
 
     pub fn run(
         functions: RefinedUsageGraph<'tcx>,
-        important_locals: ImportantLocals,
+        important_args: Vec<Local>,
         annotated_pure: bool,
         allowlist: Vec<Regex>,
         trusted_stdlib: Vec<Regex>,
@@ -279,11 +258,8 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             tcx,
         };
 
-        let body = substituted_mir(origin, tcx)
-            .ok()
-            .map(|scrutinizer_body| scrutinizer_body.split().0);
-
-        let pure = analysis.analyze_item(origin, body, important_locals);
+        let body = substituted_mir(origin, tcx).ok();
+        let pure = analysis.analyze_item(origin, body, important_args);
 
         if pure {
             PurityAnalysisResult::new(
@@ -307,26 +283,12 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
     }
 }
 
-fn dump_body<'tcx>(item: Instance<'tcx>, body: Body<'tcx>, tcx: TyCtxt<'tcx>) {
+fn dump_body<'tcx>(item: Instance<'tcx>, body: ScrutinizerBody<'tcx>, tcx: TyCtxt<'tcx>) {
+    let body = body.split().0;
     fs::create_dir_all("bodies").expect("failed to create bodies dir");
     fs::write(
         format!("bodies/{}.mir.rs", tcx.def_path_str(item.def_id())),
         body.to_string(tcx).unwrap(),
     )
     .expect("failed to write body into a file");
-}
-
-fn get_args_by_call_span<'tcx>(body: &Body<'tcx>, span: Span) -> Vec<Vec<Operand<'tcx>>> {
-    body.basic_blocks
-        .iter()
-        .filter_map(|bb| match &bb.terminator().kind {
-            TerminatorKind::Call { fn_span, args, .. } => {
-                (!span.is_dummy() && span.source_equal(*fn_span)).then_some(args.clone())
-            }
-            TerminatorKind::Drop { place, .. } => {
-                (span.is_dummy()).then_some(vec![Operand::Copy(*place)])
-            }
-            _ => None,
-        })
-        .collect()
 }
