@@ -2,25 +2,23 @@ use log::warn;
 use std::fs;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def_id::DefId, LangItem};
 use rustc_middle::{
-    mir::{visit::Visitor, Body, Location, Operand, Terminator, TerminatorKind},
+    mir::{visit::Visitor, Body, Location, Terminator, TerminatorKind},
     ty::{
-        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, TyCtxt, TyKind,
-        TypeFoldable,
+        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, Ty, TyCtxt,
+        TyKind, TypeFoldable,
     },
 };
-use rustc_span::Span;
+use rustc_span::{Span, DUMMY_SP};
 use serde::Serialize;
 
 use crate::{
-    reachability::{ImplType, Usage, Node},
+    reachability::{ImplType, Node, Usage},
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
     serialize::{
-        serialize_instance, serialize_instance_vec,
-        serialize_refined_edges, serialize_span,
-        serialize_transitive_refined_edges, 
-        serialize_transitive_refined_vec
+        serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
+        serialize_transitive_refined_edges,
     },
     utils::{erase_regions_in_sig, fn_trait_method_sig},
 };
@@ -32,12 +30,16 @@ pub enum RefinedNode<'tcx> {
         instance: Instance<'tcx>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
+        #[serde(serialize_with = "serialize_span")]
+        terminator_span: Span,
     },
     Refined {
         #[serde(serialize_with = "serialize_instance_vec")]
         instances: Vec<Instance<'tcx>>,
         #[serde(serialize_with = "serialize_span")]
         span: Span,
+        #[serde(serialize_with = "serialize_span")]
+        terminator_span: Span,
     },
 }
 
@@ -52,6 +54,17 @@ impl<'tcx> RefinedNode<'tcx> {
     pub fn span(&self) -> Span {
         match self {
             Self::Concrete { span, .. } | Self::Refined { span, .. } => *span,
+        }
+    }
+
+    pub fn terminator_span(&self) -> Span {
+        match self {
+            Self::Concrete {
+                terminator_span, ..
+            }
+            | Self::Refined {
+                terminator_span, ..
+            } => *terminator_span,
         }
     }
 
@@ -71,7 +84,11 @@ pub struct TransitiveRefinedNode<'tcx> {
 
 impl<'tcx> TransitiveRefinedNode<'tcx> {
     pub fn new(node: Instance<'tcx>, span: Span, taint: bool) -> Self {
-        Self { node, span, is_refined: taint }
+        Self {
+            node,
+            span,
+            is_refined: taint,
+        }
     }
 
     pub fn update_is_refined(&self, is_refined: bool) -> Self {
@@ -96,16 +113,14 @@ impl<'tcx> TransitiveRefinedNode<'tcx> {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
-pub struct TransitiveRefinedSubGraph<'tcx>  {
-    // the child we build the subgraph up from, e.g., panic_fmt
+pub struct TransitiveRefinedSubGraph<'tcx> {
+    // The child we build the subgraph up from, e.g., panic_fmt.
     #[serde(serialize_with = "serialize_instance")]
     child_of_interest: Instance<'tcx>,
 
-    // maps children to parents
+    // Maps children to parents.
     #[serde(serialize_with = "serialize_transitive_refined_edges")]
     backward_edges: FxHashMap<Instance<'tcx>, FxHashSet<TransitiveRefinedNode<'tcx>>>,
-
-    #[serde(serialize_with = "serialize_transitive_refined_vec")]
     crate_boundaries: Vec<TransitiveRefinedNode<'tcx>>,
 }
 
@@ -114,7 +129,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         Self {
             child_of_interest: child,
             backward_edges: FxHashMap::default(),
-            crate_boundaries: vec![]
+            crate_boundaries: vec![],
         }
     }
 
@@ -122,7 +137,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         self.child_of_interest
     }
 
-    pub fn crate_edges(&self) -> Vec<TransitiveRefinedNode<'tcx>> {
+    pub fn crate_boundaries(&self) -> Vec<TransitiveRefinedNode<'tcx>> {
         self.crate_boundaries.clone()
     }
 
@@ -160,6 +175,13 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         self.root
     }
 
+    pub fn get_forward_edges(&self, instance: &Instance<'tcx>) -> FxHashSet<RefinedNode<'tcx>> {
+        self.forward_edges
+            .get(instance)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     fn add_edge(&mut self, from: &Instance<'tcx>, to: &RefinedNode<'tcx>) {
         self.forward_edges
             .entry(from.clone())
@@ -184,21 +206,21 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         instances
     }
 
-    /// Returns a map of children to their parents (callers)
-    /// such that the direct parents carry the refinement status of the child.
+    /// Returns a map of children to their parents (callers) such that the direct parents carry the
+    /// refinement status of the child.
     fn precalculate_parents(&self) -> FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> {
-        let mut tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> = FxHashMap::default();
+        let mut tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> =
+            FxHashMap::default();
         for (refined_node, instances) in self.backward_edges.iter() {
             for child in refined_node.instances() {
                 for parent in instances {
-                    tainted_parents
-                        .entry(child.clone())
-                        .or_default()
-                        .push(TransitiveRefinedNode::new(
+                    tainted_parents.entry(child.clone()).or_default().push(
+                        TransitiveRefinedNode::new(
                             parent.clone(),
                             refined_node.span(),
                             refined_node.is_refined(),
-                        ));
+                        ),
+                    );
                 }
             }
         }
@@ -211,12 +233,13 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
     ) -> TransitiveRefinedSubGraph<'tcx> {
-        let tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> = self.precalculate_parents(); 
-        let mut subgraph = TransitiveRefinedSubGraph::new(*instance); 
+        let tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> =
+            self.precalculate_parents();
+        let mut subgraph = TransitiveRefinedSubGraph::new(*instance);
         let mut stack = vec![];
         let mut visited = FxHashSet::default();
         self.find_child_subgraph_rec(
-            instance,     
+            instance,
             &filter,
             tcx,
             false,
@@ -232,25 +255,25 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
     fn find_child_subgraph_rec(
         &self,
         instance: &Instance<'tcx>,
-        filter: &Vec<String>, //Vec<Filtered::Crate(String) or Filtered::Crate(FnName)
+        filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
         instance_refined: bool,
         tainted_parents: &FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>>,
         stack: &mut Vec<Instance<'tcx>>,
-        subgraph: &mut TransitiveRefinedSubGraph<'tcx>, 
-        visited: &mut FxHashSet<(Instance<'tcx>, bool, Option<TransitiveRefinedNode<'tcx>>)>, 
+        subgraph: &mut TransitiveRefinedSubGraph<'tcx>,
+        visited: &mut FxHashSet<(Instance<'tcx>, bool, Option<TransitiveRefinedNode<'tcx>>)>,
         crate_edge: Option<TransitiveRefinedNode<'tcx>>,
     ) {
-        // skip if we've been to this instance
+        // Skip if we've been to this instance.
         if visited.contains(&(*instance, instance_refined, crate_edge)) {
             return;
         }
-        // mark this instance as visited
+        // Mark this instance as visited.
         visited.insert((*instance, instance_refined, crate_edge));
 
-        // don't recur into crates that are filtered
+        // Don't recur into crates that are filtered.
         if filter.iter().any(|filtered_item| {
-            // match filtered_item crate or fn 
+            // Match filtered item's crate.
             tcx.crate_name(instance.def_id().krate)
                 .to_string()
                 .contains(filtered_item)
@@ -258,40 +281,42 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             return;
         }
 
-        // TODO(corinn) filter whitelisted fns
-
-        // `tainted_parents`` was precalculated. 
-        // These TransitiveRefinedNodes already reflect the status of the child `instance`. 
+        // Since we have precalculated `tainted_parents`, these nodes already reflect the status of
+        // the child's instance.
         let parents: Vec<TransitiveRefinedNode<'tcx>> =
             tainted_parents.get(&instance).cloned().unwrap_or(vec![]);
-        
-        // Base case reached - at top-level function. 
+
+        // Base case reached - at top-level function.
         if parents.is_empty() {
             match crate_edge {
-                Some(node) => 
-                    // Update the crate_edge node because 
-                    // there might have been something refined between top-level function and the crate boundary. 
-                    // This would make it a prospective false positive from the POV of caller. 
-                    subgraph.crate_boundaries.push(node.update_is_refined(instance_refined)),
+                Some(node) =>
+                // Update the crate boundary node because there might have been something
+                // refined between top-level function and the crate boundary. This would make it
+                // a prospective false positive from the POV of caller.
+                {
+                    subgraph
+                        .crate_boundaries
+                        .push(node.update_is_refined(instance_refined))
+                }
                 _ => {}
             }
         }
         for parent in parents {
-            // Each precalculated parent already carries the refinement status of its direct child,  
-            // but it may need to updated with the refinement status of a grandchild. 
-            let updated_parent_status = parent.is_refined || instance_refined; 
+            // Each precalculated parent already carries the refinement status of its direct child,
+            // but it may need to updated with the refinement status of a grandchild.
+            let updated_parent_status = parent.is_refined || instance_refined;
             let updated_parent = parent.update_is_refined(updated_parent_status);
-            // add the new edge to the subgraph
-            subgraph.add_edge(&instance, &updated_parent); 
-            // Once we hit a parent in the local crate, we store it as `crate_edge` and do not replace it again. 
-            let crate_edge = crate_edge.or_else(|| { 
-                if parent.node.def_id().is_local() { 
+            // Add the new edge to the subgraph.
+            subgraph.add_edge(&instance, &updated_parent);
+            // Once we hit a parent in the local crate, we store it and do not replace it again.
+            let crate_edge = crate_edge.or_else(|| {
+                if parent.node.def_id().is_local() {
                     Some(parent)
                 } else {
                     None
                 }
             });
-            
+
             if !stack.contains(&updated_parent.node) {
                 stack.push(updated_parent.node);
                 self.find_child_subgraph_rec(
@@ -310,16 +335,15 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         }
     }
 
-    /// Given an Instance of a child, 
-    /// traverses up the RefinedUsageGraph to find the first in-crate callers
+    /// Given an instance of a child, traverses up the graph to find the first in-crate callers.
     pub fn find_reachable_edge_local_instances(
         &self,
         instance: Instance<'tcx>,
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
     ) -> Vec<TransitiveRefinedNode<'tcx>> {
-        let subgraph = self.find_child_subgraph(&instance, filter, tcx); 
-        subgraph.crate_boundaries 
+        let subgraph = self.find_child_subgraph(&instance, filter, tcx);
+        subgraph.crate_boundaries
     }
 }
 
@@ -347,11 +371,7 @@ pub struct RefinerVisitor<'tcx> {
 }
 
 impl<'tcx> RefinerVisitor<'tcx> {
-    pub fn new(
-        root: Instance<'tcx>,
-        reachable: FxHashSet<Node<'tcx>>,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
+    pub fn new(root: Instance<'tcx>, reachable: FxHashSet<Node<'tcx>>, tcx: TyCtxt<'tcx>) -> Self {
         // We do not instantiate and normalize body just yet but do it lazily instead to support
         // partially parametric instances.
         let root_body = tcx.instance_mir(root.def).clone();
@@ -501,11 +521,9 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .instantiate_mir_and_normalize_erasing_regions(self.tcx, ParamEnv::reveal_all(), v)
     }
 
-    fn refine_rec(&mut self, func: &Operand<'tcx>, _args: &Vec<Operand<'tcx>>, span: Span) {
+    fn refine_rec(&mut self, fn_ty: Ty<'tcx>, span: Span, terminator_span: Span) {
         // Refine the passed function operand.
-        let fn_ty = self.instantiate_with_current_instance(EarlyBinder::bind(
-            func.ty(&self.current_body, self.tcx),
-        ));
+        let fn_ty = self.instantiate_with_current_instance(EarlyBinder::bind(fn_ty));
 
         let refined = match fn_ty.kind().clone() {
             TyKind::FnDef(def_id, generic_args) => {
@@ -519,8 +537,13 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     InstanceDef::Virtual(method_def_id, ..) => RefinedNode::Refined {
                         instances: self.candidates_for_virtual(method_def_id, instance.args),
                         span,
+                        terminator_span,
                     },
-                    _ => RefinedNode::Concrete { instance, span },
+                    _ => RefinedNode::Concrete {
+                        instance,
+                        span,
+                        terminator_span,
+                    },
                 }
             }
             TyKind::FnPtr(poly_fn_sig) => {
@@ -528,6 +551,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
                 RefinedNode::Refined {
                     instances: self.candidates_for_fn_ptr(fn_sig),
                     span,
+                    terminator_span,
                 }
             }
             _ => self.panic_and_dump_call_stack(
@@ -599,20 +623,31 @@ impl<'tcx> RefinerVisitor<'tcx> {
 }
 
 impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, _location: Location) {
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        let terminator_span = terminator.source_info.span;
         match &terminator.kind {
-            TerminatorKind::Call {
-                func,
-                args,
-                fn_span,
-                ..
-            } => {
-                self.refine_rec(func, args, *fn_span);
+            TerminatorKind::Call { func, fn_span, .. } => {
+                self.refine_rec(
+                    func.ty(&self.current_body, self.tcx),
+                    *fn_span,
+                    terminator_span,
+                );
+            }
+            TerminatorKind::Drop { ref place, .. } => {
+                let ty = place.ty(&self.current_body, self.tcx).ty;
+                let def_id = self.tcx.require_lang_item(LangItem::DropInPlace, None);
+                let args = self.tcx.mk_args(&[ty.into()]);
+                self.refine_rec(
+                    self.tcx.type_of(def_id).instantiate(self.tcx, args),
+                    DUMMY_SP,
+                    terminator_span,
+                );
             }
             _ => {
-                // TODO: visit other terminators, such as `Drop` or `Assert`.
+                // TODO: visit other terminators, such as `Assert`.
             }
         }
+        self.super_terminator(terminator, location);
     }
 }
 

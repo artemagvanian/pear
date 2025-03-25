@@ -7,15 +7,15 @@ edition = "2021"
 rustc_private = true
 
 [dependencies]
-rustc_plugin = { path = "../rustc_plugin/crates/rustc_plugin" }
-rustc_utils = { path = "../rustc_plugin/crates/rustc_utils" }
+rustc_plugin = { workspace = true }
+rustc_utils = { workspace = true }
 
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1" }
-regex = { version = "1" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
 
-log = { version = "0.4", features = ["kv", "kv_serde"] }
+log = { workspace = true }
 
-clap = { version = "4.5", features = ["derive"] }
+clap = { workspace = true }
 
-itertools = { version = "0.14" }
+itertools = { workspace = true }

@@ -4,6 +4,7 @@ struct Foo {
     c: bool,
 }
 
+#[pear::scrutinizer_pure]
 fn structs(a: usize) {
     let mut foo = Foo {
         a,
