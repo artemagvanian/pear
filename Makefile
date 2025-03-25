@@ -1,20 +1,24 @@
+all: fetch-deps install test
+
 fetch-deps:
-	git submodule update --init
+	git submodule update --init --recursive
 
 install:
 	cd pear_frontend && cargo install --locked --path . 
 
-test:
-	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear
+test-pear:
+	cd tests && cargo clean && cargo pear
 
 test-scrutinizer:
-	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear-scrutinizer
+	cd tests && cargo clean && cargo pear-scrutinizer
 
-test-filter:
-	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear --filter $(FILTER)
+test-pear-filter:
+	cd tests && cargo clean && cargo pear --filter $(FILTER)
 
 test-scrutinizer-filter:
-	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear-scrutinizer --filter $(FILTER)
+	cd tests && cargo clean && cargo pear-scrutinizer --filter $(FILTER)
+
+test: test-pear test-scrutinizer
 
 clean-pear:
 	cargo clean
