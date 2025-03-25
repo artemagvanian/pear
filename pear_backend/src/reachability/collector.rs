@@ -230,11 +230,8 @@ impl<'tcx> UsageGraph<'tcx> {
         }
     }
 
-    fn record_used<'a>(
-        &mut self,
-        user_item: Node<'tcx>,
-        used_items: Vec<Node<'tcx>>,
-    ) where
+    fn record_used<'a>(&mut self, user_item: Node<'tcx>, used_items: Vec<Node<'tcx>>)
+    where
         'tcx: 'a,
     {
         for used_item in used_items.iter() {
@@ -336,10 +333,7 @@ fn collect_items_rec<'tcx>(
                         }
                         hir::InlineAsmOperand::SymStatic { path: _, def_id } => {
                             trace!("collecting static {:?}", def_id);
-                            used_items.push(Node::new(
-                                MonoItem::Static(*def_id),
-                                Usage::InlineAsm,
-                            ));
+                            used_items.push(Node::new(MonoItem::Static(*def_id), Usage::InlineAsm));
                         }
                         hir::InlineAsmOperand::In { .. }
                         | hir::InlineAsmOperand::Out { .. }
@@ -598,10 +592,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                         }
                         mir::InlineAsmOperand::SymStatic { def_id } => {
                             trace!("collecting asm sym static {:?}", def_id);
-                            self.output.push(Node::new(
-                                MonoItem::Static(def_id),
-                                Usage::InlineAsm,
-                            ));
+                            self.output
+                                .push(Node::new(MonoItem::Static(def_id), Usage::InlineAsm));
                         }
                         _ => {}
                     }

@@ -1,6 +1,9 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::Instance;
-use serde::{ser::{SerializeStruct, SerializeTuple}, Serialize, Serializer};
+use serde::{
+    ser::{SerializeStruct, SerializeTuple},
+    Serialize, Serializer,
+};
 
 pub fn serialize_instance<S>(instance: &Instance, serializer: S) -> Result<S::Ok, S::Error>
 where
