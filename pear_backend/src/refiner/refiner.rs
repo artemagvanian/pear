@@ -328,7 +328,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
                     stack,
                     subgraph,
                     visited,
-                    crate_edge
+                    crate_edge,
                 );
                 stack.pop();
             }
