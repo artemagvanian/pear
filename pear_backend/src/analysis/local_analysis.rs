@@ -5,10 +5,7 @@ use rustc_hir::{
     def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
-use rustc_middle::{
-    hir::nested_filter::OnlyBodies,
-    ty::TyCtxt,
-};
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_serialize::{Decodable, Encodable};
 
 use crate::caching::{decode_from_file, encode_to_file, PearDecoder, PearEncoder};

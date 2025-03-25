@@ -1,2 +1,2 @@
-pub mod scrutinizer;
 pub mod runner;
+pub mod scrutinizer;
