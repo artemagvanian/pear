@@ -35,7 +35,7 @@ mod utils;
 pub use analysis::global_analysis::GlobalAnalysis;
 pub use analysis::local_analysis::LocalAnalysis;
 pub use reachability::{collect_from, Node, Usage, UsageGraph};
-pub use refiner::{refine_from, RefinedNode, RefinedUsageGraph, TaintedNode};
+pub use refiner::{refine_from, RefinedNode, RefinedUsageGraph, TransitiveRefinedNode};
 
 fn get_default_rustc_target() -> Result<String, String> {
     const RUSTC_COMMAND: &str = "rustc";

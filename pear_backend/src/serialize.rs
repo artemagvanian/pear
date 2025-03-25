@@ -7,7 +7,7 @@ use rustc_middle::{
 use rustc_span::Span;
 use serde::Serializer;
 
-use crate::{reachability::Node, refiner::RefinedNode};
+use crate::{reachability::Node, refiner::RefinedNode, TransitiveRefinedNode};
 
 pub fn serialize_def_id<S>(def_id: &DefId, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -35,6 +35,16 @@ where
 
 pub fn serialize_refined_edges<'tcx, S>(
     edges: &FxHashMap<Instance<'tcx>, FxHashSet<RefinedNode<'tcx>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
+}
+
+pub fn serialize_transitive_refined_edges<'tcx, S>(
+    edges: &FxHashMap<Instance<'tcx>, FxHashSet<TransitiveRefinedNode<'tcx>>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
