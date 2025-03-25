@@ -53,17 +53,6 @@ where
     serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
 }
 
-pub fn serialize_transitive_refined_vec<'tcx, S>(
-    refined_nodes: &Vec<TransitiveRefinedNode<'tcx>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.collect_seq(refined_nodes.iter())//.map(|node| node.to_string()))
-}
-
-
 pub fn serialize_instance<S>(instance: &Instance, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
