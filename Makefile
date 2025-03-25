@@ -7,8 +7,14 @@ install:
 test:
 	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear
 
+test-scrutinizer:
+	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear-scrutinizer
+
 test-filter:
 	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear --filter $(FILTER)
+
+test-scrutinizer-filter:
+	cd tests && cargo clean && RUST_BACKTRACE=full cargo pear-scrutinizer --filter $(FILTER)
 
 clean-pear:
 	cargo clean
