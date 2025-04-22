@@ -71,3 +71,29 @@ mod adversarial {
         *sink_mut[0] = value;
     }
 }
+
+mod leaky_no_args {
+    #[pear::scrutinizer_impure]
+    fn leak_conditional(s: String) {
+        if s.len() > 0 {
+            print_something();
+        }
+    }
+
+    #[pear::scrutinizer_impure]
+    fn leak_conditional_some_args(s: String) {
+        if s.len() > 0 {
+            print_something_one_arg(42);
+        }
+    }
+
+    #[pear::scrutinizer_pure]
+    fn print_something() {
+        println!("foo");
+    }
+
+    #[pear::scrutinizer_pure]
+    fn print_something_one_arg(a: u32) {
+        println!("foo");
+    }
+}

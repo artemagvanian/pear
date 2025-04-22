@@ -30,12 +30,18 @@ pub struct ScrutinizerAnalysis<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
+#[derive(Clone, Debug)]
+pub enum ImportantArgs {
+    Args(Vec<Local>),
+    AllImplicitlyImportant,
+}
+
 impl<'tcx> ScrutinizerAnalysis<'tcx> {
     fn analyze_item(
         &mut self,
         item: Instance<'tcx>,
         maybe_body_with_facts: Option<ScrutinizerBody<'tcx>>,
-        important_args: Vec<Local>,
+        important_args: ImportantArgs,
     ) -> bool {
         // Check if allowlisted.
         let is_allowlisted = {
@@ -143,24 +149,33 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                     .get_forward_edges(&item)
                     .into_iter()
                     .all(|child_node| {
-                        let important_child_node = important_terminators.iter().any(|terminator| {
-                            log::debug!(
-                                "comparing {:?} with {:?}",
-                                terminator.source_info.span,
-                                child_node.terminator_span()
-                            );
-                            terminator
-                                .source_info
-                                .span
-                                .source_equal(child_node.terminator_span())
-                        });
+                        let important_child_nodes = important_terminators
+                            .iter()
+                            .filter(|dependent_terminator| {
+                                log::debug!(
+                                    "comparing {:?} with {:?}",
+                                    dependent_terminator.terminator().source_info.span,
+                                    child_node.terminator_span()
+                                );
+                                dependent_terminator
+                                    .terminator()
+                                    .source_info
+                                    .span
+                                    .source_equal(child_node.terminator_span())
+                            })
+                            .collect::<Vec<_>>();
 
-                        if important_child_node {
+                        let is_implicitly_leaking =
+                            important_child_nodes.iter().any(|dependent_terminator| {
+                                dependent_terminator.is_implicitly_dependent()
+                            });
+
+                        if important_child_nodes.len() > 0 {
                             child_node.instances().into_iter().all(|child_item| {
                                 if self.stack.contains(&child_item) {
                                     return true;
                                 } else {
-                                    self.analyze_child(child_item)
+                                    self.analyze_child(is_implicitly_leaking, child_item)
                                 }
                             })
                         } else {
@@ -190,11 +205,20 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
         }
     }
 
-    fn analyze_child(&mut self, instance: Instance<'tcx>) -> bool {
+    fn analyze_child(&mut self, is_implicitly_leaking: bool, instance: Instance<'tcx>) -> bool {
         let maybe_body_with_facts = substituted_mir(instance, self.tcx);
-        let important_args = (1..=num_args_for_instance(instance, self.tcx))
-            .map(|arg_num| Local::from_usize(arg_num))
-            .collect_vec();
+
+        let num_args_for_instance = num_args_for_instance(instance, self.tcx);
+        let important_args = if is_implicitly_leaking {
+            // If leaking implicitly, any argument becomes "important".
+            ImportantArgs::AllImplicitlyImportant
+        } else {
+            ImportantArgs::Args(
+                (1..=num_args_for_instance)
+                    .map(|arg_num| Local::from_usize(arg_num))
+                    .collect_vec(),
+            )
+        };
 
         match maybe_body_with_facts.clone() {
             Ok(body_with_facts) => {
@@ -219,7 +243,7 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                                     if self.stack.contains(&child_item) {
                                         return true;
                                     } else {
-                                        self.analyze_child(child_item)
+                                        self.analyze_child(is_implicitly_leaking, child_item)
                                     }
                                 })
                                 .collect_vec()
@@ -240,7 +264,7 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
 
     pub fn run(
         functions: RefinedUsageGraph<'tcx>,
-        important_args: Vec<Local>,
+        important_args: ImportantArgs,
         annotated_pure: bool,
         allowlist: Vec<Regex>,
         trusted_stdlib: Vec<Regex>,

@@ -12,7 +12,7 @@ use pear_backend::{collect_from, refine_from, GlobalAnalysis};
 use serde::{Deserialize, Serialize};
 
 use crate::analysis::scrutinizer::{
-    analyzer::{ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
+    analyzer::{ImportantArgs, ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
     scrutinizer_local::substituted_mir,
     selector::{select_functions, select_pprs},
     utils::instance_sig,
@@ -154,10 +154,13 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                     } else {
                         config.important_args.as_ref().unwrap().to_owned()
                     };
-                    important_args
-                        .into_iter()
-                        .map(|arg_num| Local::from_usize(arg_num))
-                        .collect()
+
+                    ImportantArgs::Args(
+                        important_args
+                            .into_iter()
+                            .map(|arg_num| Local::from_usize(arg_num))
+                            .collect(),
+                    )
                 };
 
                 let allowlist = config
