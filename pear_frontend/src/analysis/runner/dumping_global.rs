@@ -11,6 +11,7 @@ use rustc_middle::{
 use rustc_span::Symbol;
 
 use pear_backend::{collect_from, refine_from, GlobalAnalysis, RefinedUsageGraph};
+use rustc_utils::BodyExt;
 
 pub struct DumpingGlobalAnalysis {
     filter: Option<Regex>,
@@ -94,6 +95,20 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
 
                 let (items, usage_map) =
                     collect_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
+
+                for item in items.iter() {
+                    if let MonoItem::Fn(instance) = item.item()
+                        && tcx.is_mir_available(instance.def_id())
+                    {
+                        let body = tcx.instance_mir(instance.def);
+                        fs::create_dir_all("bodies").expect("failed to create bodies dir");
+                        fs::write(
+                            format!("bodies/{}.mir.rs", tcx.def_path_str(instance.def_id())),
+                            body.to_string(tcx).unwrap(),
+                        )
+                        .expect("failed to write body into a file");
+                    }
+                }
 
                 let serialized_collection_results = serde_json::to_string_pretty(&usage_map)
                     .expect("failed to serialize collection results");

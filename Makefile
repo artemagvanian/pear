@@ -27,6 +27,7 @@ clean-tests:
 	cd tests && cargo clean
 
 clean-output:
-	cd tests && rm -rf *.pear.*
+	cd tests && rm -rf *.pear.* 
+	cd tests/bodies && rm -rf *.mir.*
 
 clean: clean-pear clean-tests clean-output
