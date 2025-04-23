@@ -9,8 +9,6 @@ pub struct PearPlugin;
 
 #[derive(Parser, Serialize, Deserialize)]
 pub struct PearPluginArgs {
-    #[clap(short, long, default_value = "true")]
-    skip_generics: bool,
     #[clap(short, long)]
     filter: Option<String>,
     #[clap(last = true)]
@@ -56,12 +54,11 @@ impl RustcPlugin for PearPlugin {
             }
             pear_backend::CrateHandling::GlobalAnalysis => {
                 Box::new(pear_backend::GlobalAnalysisCallbacks::new(
-                    crate::analysis::runner::DumpingGlobalAnalysis::new(
-                        plugin_args.filter.map(|filter| {
+                    crate::analysis::runner::DumpingGlobalAnalysis::new(plugin_args.filter.map(
+                        |filter| {
                             Regex::new(filter.as_str()).expect("failed to compile filter regex")
-                        }),
-                        plugin_args.skip_generics,
-                    ),
+                        },
+                    )),
                     crate::analysis::runner::CachedBodyAnalysis {},
                 ))
             }

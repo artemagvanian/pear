@@ -254,7 +254,6 @@ fn collect_items_rec<'tcx>(
     starting_item: Node<'tcx>,
     visited: &mut FxHashSet<Node<'tcx>>,
     usage_map: &mut UsageGraph<'tcx>,
-    attempt_resolving_partial: bool,
 ) {
     if !visited.insert(starting_item) {
         // We've been here already, no need to search again.
@@ -271,26 +270,13 @@ fn collect_items_rec<'tcx>(
     match starting_item.item() {
         MonoItem::Fn(instance) => {
             rustc_data_structures::stack::ensure_sufficient_stack(|| {
-                collect_used_items(
-                    tcx,
-                    instance,
-                    starting_item.usage(),
-                    &mut used_items,
-                    attempt_resolving_partial,
-                );
+                collect_used_items(tcx, instance, starting_item.usage(), &mut used_items);
             });
         }
         MonoItem::Static(def_id) => {
             let instance = Instance::mono(tcx, def_id);
             let ty = instance.ty(tcx, ty::ParamEnv::reveal_all());
-            visit_drop_use(
-                tcx,
-                ty,
-                true,
-                &mut used_items,
-                Usage::Drop,
-                attempt_resolving_partial,
-            );
+            visit_drop_use(tcx, ty, true, &mut used_items, Usage::Drop);
 
             if let Ok(alloc) = tcx.eval_static_initializer(def_id) {
                 for &prov in alloc.inner().provenance().ptrs().values() {
@@ -322,14 +308,7 @@ fn collect_items_rec<'tcx>(
                             let fn_ty = tcx
                                 .typeck_body(anon_const.body)
                                 .node_type(anon_const.hir_id);
-                            visit_fn_use(
-                                tcx,
-                                fn_ty,
-                                false,
-                                &mut used_items,
-                                Usage::InlineAsm,
-                                attempt_resolving_partial,
-                            );
+                            visit_fn_use(tcx, fn_ty, false, &mut used_items, Usage::InlineAsm);
                         }
                         hir::InlineAsmOperand::SymStatic { path: _, def_id } => {
                             trace!("collecting static {:?}", def_id);
@@ -355,13 +334,7 @@ fn collect_items_rec<'tcx>(
     usage_map.record_used(starting_item, used_items.clone());
 
     for used_item in used_items {
-        collect_items_rec(
-            tcx,
-            used_item,
-            visited,
-            usage_map,
-            attempt_resolving_partial,
-        );
+        collect_items_rec(tcx, used_item, visited, usage_map);
     }
 }
 
@@ -371,7 +344,6 @@ struct MirUsedCollector<'a, 'tcx> {
     output: &'a mut UsedMonoItems<'tcx>,
     instance: Instance<'tcx>,
     usage: Usage<'tcx>,
-    attempt_resolving_partial: bool,
 }
 
 impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
@@ -387,11 +359,7 @@ impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
                 ty::ParamEnv::reveal_all(),
                 ty::EarlyBinder::bind(value),
             );
-        if self.attempt_resolving_partial {
-            maybe_mono
-        } else {
-            Ok(maybe_mono.expect("reachability is not configured to perform partial resolution"))
-        }
+        Ok(maybe_mono.expect("reachability is not configured to perform partial resolution"))
     }
 }
 
@@ -431,7 +399,6 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                         target_ty,
                         source_ty,
                         self.output,
-                        self.attempt_resolving_partial,
                     );
                 }
             }
@@ -451,14 +418,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                     ),
                     _ => bug!(),
                 };
-                visit_fn_use(
-                    self.tcx,
-                    fn_ty,
-                    false,
-                    self.output,
-                    Usage::FnPtr { sig },
-                    self.attempt_resolving_partial,
-                );
+                visit_fn_use(self.tcx, fn_ty, false, self.output, Usage::FnPtr { sig });
             }
             mir::Rvalue::Cast(
                 mir::CastKind::PointerCoercion(PointerCoercion::ClosureFnPointer(_)),
@@ -551,28 +511,14 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                 } else {
                     Usage::Call
                 };
-                visit_fn_use(
-                    self.tcx,
-                    callee_ty,
-                    true,
-                    self.output,
-                    usage,
-                    self.attempt_resolving_partial,
-                )
+                visit_fn_use(self.tcx, callee_ty, true, self.output, usage)
             }
             mir::TerminatorKind::Drop { ref place, .. } => {
                 let ty = place.ty(self.body, self.tcx).ty;
                 let Ok(ty) = self.monomorphize(ty) else {
                     return;
                 };
-                visit_drop_use(
-                    self.tcx,
-                    ty,
-                    true,
-                    self.output,
-                    Usage::Drop,
-                    self.attempt_resolving_partial,
-                );
+                visit_drop_use(self.tcx, ty, true, self.output, Usage::Drop);
             }
             mir::TerminatorKind::InlineAsm { ref operands, .. } => {
                 for op in operands {
@@ -581,14 +527,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                             let Ok(fn_ty) = self.monomorphize(value.const_.ty()) else {
                                 return;
                             };
-                            visit_fn_use(
-                                self.tcx,
-                                fn_ty,
-                                false,
-                                self.output,
-                                Usage::InlineAsm,
-                                self.attempt_resolving_partial,
-                            );
+                            visit_fn_use(self.tcx, fn_ty, false, self.output, Usage::InlineAsm);
                         }
                         mir::InlineAsmOperand::SymStatic { def_id } => {
                             trace!("collecting asm sym static {:?}", def_id);
@@ -637,7 +576,6 @@ fn visit_drop_use<'tcx>(
     is_direct_call: bool,
     output: &mut UsedMonoItems<'tcx>,
     usage: Usage<'tcx>,
-    attempt_resolving_partial: bool,
 ) {
     let def_id = tcx.require_lang_item(LangItem::DropInPlace, None);
     let args = tcx.mk_args(&[ty.into()]);
@@ -646,11 +584,7 @@ fn visit_drop_use<'tcx>(
     {
         instance
     } else {
-        if attempt_resolving_partial {
-            return;
-        } else {
-            bug!("reachability is not configured to perform partial resolution")
-        }
+        bug!("reachability is not configured to perform partial resolution")
     };
 
     visit_instance_use(tcx, instance, is_direct_call, output, usage);
@@ -662,7 +596,6 @@ fn visit_fn_use<'tcx>(
     is_direct_call: bool,
     output: &mut UsedMonoItems<'tcx>,
     usage: Usage<'tcx>,
-    attempt_resolving_partial: bool,
 ) {
     if let ty::FnDef(def_id, args) = *ty.kind() {
         let instance = if is_direct_call {
@@ -671,11 +604,7 @@ fn visit_fn_use<'tcx>(
             {
                 instance
             } else {
-                if attempt_resolving_partial {
-                    return;
-                } else {
-                    bug!("reachability is not configured to perform partial resolution")
-                }
+                bug!("reachability is not configured to perform partial resolution")
             }
         } else {
             match ty::Instance::resolve_for_fn_ptr(tcx, ty::ParamEnv::reveal_all(), def_id, args) {
@@ -858,7 +787,6 @@ fn create_mono_items_for_vtable_methods<'tcx>(
     trait_ty: Ty<'tcx>,
     impl_ty: Ty<'tcx>,
     output: &mut UsedMonoItems<'tcx>,
-    attempt_resolving_partial: bool,
 ) {
     assert!(!trait_ty.has_escaping_bound_vars() && !impl_ty.has_escaping_bound_vars());
 
@@ -912,14 +840,7 @@ fn create_mono_items_for_vtable_methods<'tcx>(
         }
 
         // Also add the destructor.
-        visit_drop_use(
-            tcx,
-            impl_ty,
-            false,
-            output,
-            Usage::IndirectDrop,
-            attempt_resolving_partial,
-        );
+        visit_drop_use(tcx, impl_ty, false, output, Usage::IndirectDrop);
     }
 }
 
@@ -961,7 +882,6 @@ fn collect_used_items<'tcx>(
     instance: Instance<'tcx>,
     usage: Usage<'tcx>,
     output: &mut UsedMonoItems<'tcx>,
-    attempt_resolving_partial: bool,
 ) {
     let body = tcx.instance_mir(instance.def);
     // Here we rely on the visitor also visiting `required_consts`, so that we evaluate them
@@ -972,7 +892,6 @@ fn collect_used_items<'tcx>(
         output,
         instance,
         usage,
-        attempt_resolving_partial,
     }
     .visit_body(body);
 }
@@ -999,7 +918,6 @@ fn collect_const_value<'tcx>(
 pub fn collect_from<'tcx>(
     tcx: TyCtxt<'tcx>,
     root: MonoItem<'tcx>,
-    attempt_resolving_partial: bool,
 ) -> (FxHashSet<Node<'tcx>>, UsageGraph<'tcx>) {
     let mut visited = FxHashSet::default();
     let mut usage_map = UsageGraph::new();
@@ -1008,7 +926,6 @@ pub fn collect_from<'tcx>(
         Node::new(root, Usage::Root),
         &mut visited,
         &mut usage_map,
-        attempt_resolving_partial,
     );
     (visited, usage_map)
 }

@@ -1,8 +1,13 @@
-use rustc_hir::def::DefKind;
-use rustc_middle::ty::{FnSig, Instance, TyCtxt};
+use rustc_middle::{
+    bug,
+    ty::{FnSig, Instance, TyCtxt},
+};
 
 pub fn instance_sig<'tcx>(instance: Instance<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
-    if matches!(tcx.def_kind(instance.def_id()), DefKind::Closure) {
+    if tcx.is_closure_or_coroutine(instance.def_id()) {
+        if tcx.is_coroutine(instance.def_id()) {
+            bug!("coroutines do not have a conventional signature");
+        }
         tcx.instantiate_bound_regions_with_erased(
             tcx.erase_regions(instance.args.as_closure().sig()),
         )

@@ -16,7 +16,7 @@ use crate::analysis::scrutinizer::important::compute_dependent_terminators;
 use crate::analysis::scrutinizer::scrutinizer_local::{
     substituted_mir, ScrutinizerBody, SubstitutedMirErrorKind,
 };
-use crate::analysis::scrutinizer::utils::num_args_for_instance;
+use crate::analysis::utils::num_args_for_instance;
 
 use super::result::ImpurityReason;
 
