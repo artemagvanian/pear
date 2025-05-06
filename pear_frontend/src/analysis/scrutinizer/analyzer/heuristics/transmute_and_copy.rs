@@ -1,30 +1,36 @@
-use rustc_middle::mir::CastKind;
 use rustc_middle::mir::{visit::Visitor, Body, Location, Mutability, Rvalue};
+use rustc_middle::mir::{
+    CastKind, CopyNonOverlapping, Local, NonDivergingIntrinsic, Operand, Statement, StatementKind,
+};
 use rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
 
 use std::ops::ControlFlow;
 
-struct TransmuteVisitor<'tcx> {
+struct TransmuteAndCopyVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     has_transmute: bool,
+    has_copy: bool,
+    important_args: Vec<Local>,
 }
 
-pub trait HasTransmute<'tcx> {
-    fn has_transmute(&self, tcx: TyCtxt<'tcx>) -> bool;
+pub trait HasTransmuteAndCopy<'tcx> {
+    fn has_transmute_or_copy(&self, tcx: TyCtxt<'tcx>, important_args: Vec<Local>) -> bool;
 }
 
-impl<'tcx> HasTransmute<'tcx> for Body<'tcx> {
-    fn has_transmute(&self, tcx: TyCtxt<'tcx>) -> bool {
-        let mut ptr_deref_visitor = TransmuteVisitor {
+impl<'tcx> HasTransmuteAndCopy<'tcx> for Body<'tcx> {
+    fn has_transmute_or_copy(&self, tcx: TyCtxt<'tcx>, important_args: Vec<Local>) -> bool {
+        let mut ptr_deref_visitor = TransmuteAndCopyVisitor {
             tcx,
             has_transmute: false,
+            has_copy: false,
+            important_args,
         };
         ptr_deref_visitor.visit_body(self);
-        ptr_deref_visitor.has_transmute
+        ptr_deref_visitor.has_transmute || ptr_deref_visitor.has_copy
     }
 }
 
-impl<'a, 'tcx> Visitor<'tcx> for TransmuteVisitor<'tcx> {
+impl<'a, 'tcx> Visitor<'tcx> for TransmuteAndCopyVisitor<'tcx> {
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
         if let Rvalue::Cast(CastKind::Transmute, _, to) = rvalue {
             if contains_mut_ref(to, self.tcx) {
@@ -32,6 +38,21 @@ impl<'a, 'tcx> Visitor<'tcx> for TransmuteVisitor<'tcx> {
             }
         }
         self.super_rvalue(rvalue, location);
+    }
+
+    fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
+        if let StatementKind::Intrinsic(box NonDivergingIntrinsic::CopyNonOverlapping(
+            CopyNonOverlapping { src, .. },
+        )) = &statement.kind
+        {
+            if let Operand::Copy(place) | Operand::Move(place) = src
+                && self.important_args.contains(&place.local)
+            // This depends on the fact that `CopyNonoverlapping` operates directly on the arguments in the intrinsic.
+            {
+                self.has_copy = true;
+            }
+        }
+        self.super_statement(statement, location);
     }
 }
 
