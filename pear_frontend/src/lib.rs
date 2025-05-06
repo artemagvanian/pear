@@ -1,4 +1,4 @@
-#![feature(rustc_private, box_patterns, min_specialization)]
+#![feature(rustc_private, box_patterns, min_specialization, let_chains)]
 
 extern crate either;
 extern crate polonius_engine;
