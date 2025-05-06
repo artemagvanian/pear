@@ -72,11 +72,6 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
             }
 
             if let ItemKind::Fn(..) = &item.kind {
-                let fn_ty = tcx
-                    .type_of(def_id)
-                    .instantiate(tcx, ty::GenericArgs::identity_for_item(tcx, def_id));
-                println!("{fn_ty:?}, {:?}", tcx.asyncness(def_id));
-
                 let instance =
                     ty::Instance::new(def_id, ty::GenericArgs::identity_for_item(tcx, def_id));
 
