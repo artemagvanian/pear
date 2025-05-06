@@ -11,18 +11,17 @@ use rustc_middle::{
 use rustc_span::Symbol;
 
 use pear_backend::{collect_from, refine_from, GlobalAnalysis, RefinedUsageGraph};
+use rustc_utils::BodyExt;
+
+use crate::analysis::utils::instance_sig;
 
 pub struct DumpingGlobalAnalysis {
     filter: Option<Regex>,
-    skip_generic: bool,
 }
 
 impl<'tcx> DumpingGlobalAnalysis {
-    pub fn new(filter: Option<Regex>, skip_generic: bool) -> Self {
-        Self {
-            filter,
-            skip_generic,
-        }
+    pub fn new(filter: Option<Regex>) -> Self {
+        Self { filter }
     }
 }
 
@@ -76,24 +75,54 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 let instance =
                     ty::Instance::new(def_id, ty::GenericArgs::identity_for_item(tcx, def_id));
 
-                let instance_sig: FnSig = tcx.instantiate_bound_regions_with_erased(
-                    tcx.erase_regions(
-                        tcx.fn_sig(instance.def_id())
-                            .instantiate(tcx, instance.args),
-                    ),
-                );
+                let instance_sig: FnSig = instance_sig(instance, tcx);
 
-                if self.skip_generic
-                    && instance_sig
-                        .inputs_and_output
-                        .iter()
-                        .any(|ty| contains_non_concrete_type(ty))
+                if instance_sig
+                    .inputs_and_output
+                    .iter()
+                    .any(|ty| contains_non_concrete_type(ty))
                 {
-                    continue;
+                    println!("WARNING: the function passed to analysis contains dynamic types; MCG construction might be incomplete.")
                 }
 
-                let (items, usage_map) =
-                    collect_from(tcx, MonoItem::Fn(instance), !self.skip_generic);
+                let entry_instance = match tcx.asyncness(def_id) {
+                    ty::Asyncness::Yes => {
+                        let intermediate_instance = ty::Instance::new(
+                            def_id,
+                            ty::GenericArgs::identity_for_item(tcx, def_id),
+                        );
+                        let intermediate_body = tcx.instance_mir(intermediate_instance.def);
+                        let inner_coroutine_type = intermediate_body.return_ty();
+                        let ty::TyKind::Coroutine(inner_coroutine_def_id, ..) =
+                            inner_coroutine_type.kind().clone()
+                        else {
+                            unreachable!()
+                        };
+                        ty::Instance::new(
+                            inner_coroutine_def_id,
+                            ty::GenericArgs::identity_for_item(tcx, inner_coroutine_def_id),
+                        )
+                    }
+                    ty::Asyncness::No => {
+                        ty::Instance::new(def_id, ty::GenericArgs::identity_for_item(tcx, def_id))
+                    }
+                };
+
+                let (items, usage_map) = collect_from(tcx, MonoItem::Fn(entry_instance));
+
+                for item in items.iter() {
+                    if let MonoItem::Fn(instance) = item.item()
+                        && tcx.is_mir_available(instance.def_id())
+                    {
+                        let body = tcx.instance_mir(instance.def);
+                        fs::create_dir_all("bodies").expect("failed to create bodies dir");
+                        fs::write(
+                            format!("bodies/{}.mir.rs", tcx.def_path_str(instance.def_id())),
+                            body.to_string(tcx).unwrap(),
+                        )
+                        .expect("failed to write body into a file");
+                    }
+                }
 
                 let serialized_collection_results = serde_json::to_string_pretty(&usage_map)
                     .expect("failed to serialize collection results");
@@ -103,7 +132,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for DumpingGlobalAnalysis {
                 )
                 .expect("failed to write collection results to a file");
 
-                let refined_usage_graph = refine_from(instance, items, tcx);
+                let refined_usage_graph = refine_from(entry_instance, items, tcx);
                 let serialized_refinement_results =
                     serde_json::to_string_pretty(&refined_usage_graph)
                         .expect("failed to serialize refinement results");

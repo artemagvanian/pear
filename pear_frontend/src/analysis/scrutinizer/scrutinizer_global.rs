@@ -11,10 +11,12 @@ use rustc_middle::{
 use pear_backend::{collect_from, refine_from, GlobalAnalysis};
 use serde::{Deserialize, Serialize};
 
-use crate::analysis::scrutinizer::{
-    analyzer::{ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
-    scrutinizer_local::substituted_mir,
-    selector::{select_functions, select_pprs},
+use crate::analysis::{
+    scrutinizer::{
+        analyzer::{ImpurityReason, PurityAnalysisResult, ScrutinizerAnalysis},
+        scrutinizer_local::substituted_mir,
+        selector::{select_functions, select_pprs},
+    },
     utils::instance_sig,
 };
 
@@ -137,7 +139,7 @@ impl<'tcx> GlobalAnalysis<'tcx> for ScrutinizerGlobalAnalysis {
                     annotated_pure,
                 )
             } else {
-                let (items, _) = collect_from(tcx, MonoItem::Fn(analysis_target), false);
+                let (items, _) = collect_from(tcx, MonoItem::Fn(analysis_target));
 
                 let refined_usage_graph = refine_from(analysis_target, items, tcx);
 
