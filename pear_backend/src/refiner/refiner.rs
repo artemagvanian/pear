@@ -13,6 +13,9 @@ use rustc_middle::{
 use rustc_span::{Span, DUMMY_SP};
 use serde::Serialize;
 
+extern crate unicode_segmentation;
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{
     reachability::{ImplType, Node, Usage},
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
@@ -271,8 +274,25 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         // Mark this instance as visited.
         visited.insert((*instance, instance_refined, crate_edge));
 
+        let path = tcx.def_path_str(instance.def_id());
+        let tokens = path.unicode_words().collect::<Vec<&str>>();
+        
+        // compare prefixes
+        for val in filter.iter() {
+            let allowed_tokens: Vec<&str> = val.unicode_words().collect::<Vec<&str>>();
+
+            let matching = allowed_tokens.iter()
+                .zip(tokens.iter())
+                .filter(|(allowed_tokens, tokens)| allowed_tokens == tokens)
+                .count();
+
+            if matching == allowed_tokens.len() {
+                return;
+            }
+        }
+        
         // Don't recur into crates that are filtered.
-        if filter.iter().any(|filtered_item| {
+        if filter.iter().any(|filtered_item: &String| {
             // Match filtered item's crate.
             tcx.crate_name(instance.def_id().krate)
                 .to_string()
@@ -280,6 +300,11 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         }) {
             return;
         }
+
+        // whitelisted - filter (vec of Strings/vec of regexs)
+        // TODO(corinn) filter whitelisted fns
+        // tcx - devpathstring method (stdized identifier)
+        // use devid from instance 
 
         // Since we have precalculated `tainted_parents`, these nodes already reflect the status of
         // the child's instance.
