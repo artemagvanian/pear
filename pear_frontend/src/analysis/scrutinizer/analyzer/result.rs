@@ -1,7 +1,7 @@
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::Instance;
+use rustc_middle::{mir::Local, ty::Instance};
 use serde::{
-    ser::{SerializeStruct, SerializeTuple},
+    ser::{SerializeSeq, SerializeStruct, SerializeTuple},
     Serialize, Serializer,
 };
 
@@ -15,13 +15,26 @@ where
     tup.end()
 }
 
+pub fn serialize_vec_local<S>(vec_local: &Vec<Local>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut seq = serializer.serialize_seq(Some(vec_local.len()))?;
+    for local in vec_local.iter() {
+        seq.serialize_element(&local.as_u32())?
+    }
+    seq.end()
+}
+
 #[derive(Serialize)]
 pub struct FunctionWithMetadata<'tcx> {
     #[serde(serialize_with = "serialize_instance")]
     function: Instance<'tcx>,
     raw_pointer_deref: bool,
     allowlisted: bool,
-    has_transmute: bool,
+    has_transmute_or_copy: bool,
+    #[serde(serialize_with = "serialize_vec_local")]
+    important_args: Vec<Local>,
 }
 
 impl<'tcx> FunctionWithMetadata<'tcx> {
@@ -29,13 +42,15 @@ impl<'tcx> FunctionWithMetadata<'tcx> {
         function: Instance<'tcx>,
         raw_pointer_deref: bool,
         allowlisted: bool,
-        has_transmute: bool,
+        has_transmute_or_copy: bool,
+        important_args: Vec<Local>,
     ) -> Self {
         FunctionWithMetadata {
             function,
             raw_pointer_deref,
             allowlisted,
-            has_transmute,
+            has_transmute_or_copy,
+            important_args,
         }
     }
 }

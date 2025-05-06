@@ -20,7 +20,3 @@ pub fn instance_sig<'tcx>(instance: Instance<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<
         )
     }
 }
-
-pub fn num_args_for_instance<'tcx>(instance: Instance<'tcx>, tcx: TyCtxt<'tcx>) -> usize {
-    instance_sig(instance, tcx).inputs().len()
-}

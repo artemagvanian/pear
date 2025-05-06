@@ -14,13 +14,19 @@ use rustc_utils::mir::location_or_arg::LocationOrArg;
 
 use crate::analysis::scrutinizer::scrutinizer_local::ScrutinizerBody;
 
+#[derive(Debug)]
+pub struct DependentTerminator<'tcx> {
+    pub terminator: Terminator<'tcx>,
+    pub dependent_arg_indices: Vec<usize>,
+}
+
 // This function computes all locals that depend on the argument local for a given def_id.
 pub fn compute_dependent_terminators<'tcx>(
     def_id: DefId,
     important_args: Vec<Local>,
     body_with_facts: ScrutinizerBody<'tcx>,
     tcx: TyCtxt<'tcx>,
-) -> Vec<Terminator<'tcx>> {
+) -> Vec<DependentTerminator<'tcx>> {
     let body_with_facts_ref: &'tcx ScrutinizerBody<'tcx> =
         unsafe { std::mem::transmute(&body_with_facts) };
     let place_info = PlaceInfo::build(tcx, def_id, body_with_facts_ref);
@@ -45,39 +51,64 @@ pub fn compute_dependent_terminators<'tcx>(
                     let targets = args
                         .iter()
                         .filter_map(|arg| arg.place())
-                        .map(|place| (place, LocationOrArg::Location(terminator_loc)))
+                        .map(|place| vec![(place, LocationOrArg::Location(terminator_loc))])
                         .collect_vec();
-                    flowistry::infoflow::compute_dependencies(
+
+                    let indices = args
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, arg)| arg.place().map(|_| idx))
+                        .collect_vec();
+
+                    let dependent_arg_indices = flowistry::infoflow::compute_dependencies(
                         &results,
-                        vec![targets],
+                        targets,
                         Direction::Backward,
-                    )[0]
+                    )
                     .iter()
-                    .any(|location_or_arg| {
-                        if let LocationOrArg::Arg(local) = *location_or_arg {
-                            important_args.contains(&local)
-                        } else {
-                            false
-                        }
+                    .zip(indices)
+                    .filter_map(|(deps, idx)| {
+                        deps.iter()
+                            .any(|location_or_arg| {
+                                if let LocationOrArg::Arg(local) = *location_or_arg
+                                    && important_args.contains(&local)
+                                {
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .then_some(idx)
                     })
-                    .then_some(terminator.clone())
+                    .collect_vec();
+                    (!dependent_arg_indices.is_empty()).then_some(DependentTerminator {
+                        terminator: terminator.clone(),
+                        dependent_arg_indices,
+                    })
                 }
                 TerminatorKind::Drop { place, .. } => {
                     let targets = vec![(*place, LocationOrArg::Location(terminator_loc))];
-                    flowistry::infoflow::compute_dependencies(
+
+                    let dependent_arg_indices = flowistry::infoflow::compute_dependencies(
                         &results,
                         vec![targets],
                         Direction::Backward,
                     )[0]
                     .iter()
-                    .any(|location_or_arg| {
-                        if let LocationOrArg::Arg(local) = *location_or_arg {
-                            important_args.contains(&local)
+                    .filter_map(|location_or_arg| {
+                        if let LocationOrArg::Arg(local) = *location_or_arg
+                            && important_args.contains(&local)
+                        {
+                            Some(0)
                         } else {
-                            false
+                            None
                         }
                     })
-                    .then_some(terminator.clone())
+                    .collect_vec();
+                    (!dependent_arg_indices.is_empty()).then_some(DependentTerminator {
+                        terminator: terminator.clone(),
+                        dependent_arg_indices,
+                    })
                 }
                 _ => None,
             }

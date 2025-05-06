@@ -8,17 +8,15 @@ use rustc_middle::ty::{Instance, TyCtxt};
 use rustc_span::symbol::Symbol;
 use rustc_utils::BodyExt;
 
+use super::result::ImpurityReason;
 use crate::analysis::scrutinizer::analyzer::{
-    heuristics::{HasRawPtrDeref, HasTransmute},
+    heuristics::{HasRawPtrDeref, HasTransmuteAndCopy},
     result::{FunctionWithMetadata, PurityAnalysisResult},
 };
 use crate::analysis::scrutinizer::important::compute_dependent_terminators;
 use crate::analysis::scrutinizer::scrutinizer_local::{
     substituted_mir, ScrutinizerBody, SubstitutedMirErrorKind,
 };
-use crate::analysis::utils::num_args_for_instance;
-
-use super::result::ImpurityReason;
 
 pub struct ScrutinizerAnalysis<'tcx> {
     passing_calls: Vec<FunctionWithMetadata<'tcx>>,
@@ -43,8 +41,13 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             self.allowlist.iter().any(|lib| lib.is_match(&def_path_str))
         };
         if is_allowlisted {
-            let info_with_metadata =
-                FunctionWithMetadata::new(item.to_owned(), false, is_allowlisted, false);
+            let info_with_metadata = FunctionWithMetadata::new(
+                item.to_owned(),
+                false,
+                is_allowlisted,
+                false,
+                important_args,
+            );
             self.passing_calls.push(info_with_metadata);
             return true;
         }
@@ -57,7 +60,7 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
             }
             None => {
                 let info_with_metadata =
-                    FunctionWithMetadata::new(item.to_owned(), false, false, false);
+                    FunctionWithMetadata::new(item.to_owned(), false, false, false, important_args);
                 self.failing_calls.push(info_with_metadata);
                 return false;
             }
@@ -99,7 +102,8 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
 
         // Compute raw pointer dereference and transmute heuristics.
         let has_raw_pointer_deref = optimized_mir.has_raw_ptr_deref(self.tcx);
-        let has_transmute = optimized_mir.has_transmute(self.tcx);
+        let has_transmute_or_copy =
+            optimized_mir.has_transmute_or_copy(self.tcx, important_args.clone());
 
         // Check if trusted.
         if is_trusted {
@@ -107,17 +111,19 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                 item.to_owned(),
                 has_raw_pointer_deref,
                 is_allowlisted,
-                has_transmute,
+                has_transmute_or_copy,
+                important_args,
             );
             self.passing_calls.push(info_with_metadata);
             true
         } else {
-            if has_raw_pointer_deref || has_transmute {
+            if has_raw_pointer_deref || has_transmute_or_copy {
                 let info_with_metadata = FunctionWithMetadata::new(
                     item.to_owned(),
                     has_raw_pointer_deref,
                     is_allowlisted,
-                    has_transmute,
+                    has_transmute_or_copy,
+                    important_args,
                 );
                 self.failing_calls.push(info_with_metadata);
                 return false;
@@ -143,24 +149,29 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                     .get_forward_edges(&item)
                     .into_iter()
                     .all(|child_node| {
-                        let important_child_node = important_terminators.iter().any(|terminator| {
-                            log::debug!(
-                                "comparing {:?} with {:?}",
-                                terminator.source_info.span,
-                                child_node.terminator_span()
-                            );
-                            terminator
-                                .source_info
-                                .span
-                                .source_equal(child_node.terminator_span())
-                        });
+                        let important_terminator =
+                            important_terminators.iter().find(|dependent_terminator| {
+                                log::debug!(
+                                    "comparing {:?} with {:?}",
+                                    dependent_terminator.terminator.source_info.span,
+                                    child_node.terminator_span()
+                                );
+                                dependent_terminator
+                                    .terminator
+                                    .source_info
+                                    .span
+                                    .source_equal(child_node.terminator_span())
+                            });
 
-                        if important_child_node {
+                        if let Some(dependent_terminator) = important_terminator {
                             child_node.instances().into_iter().all(|child_item| {
                                 if self.stack.contains(&child_item) {
                                     return true;
                                 } else {
-                                    self.analyze_child(child_item)
+                                    self.analyze_child(
+                                        child_item,
+                                        dependent_terminator.dependent_arg_indices.clone(),
+                                    )
                                 }
                             })
                         } else {
@@ -173,7 +184,8 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                     item.to_owned(),
                     has_raw_pointer_deref,
                     is_allowlisted,
-                    has_transmute,
+                    has_transmute_or_copy,
+                    important_args,
                 );
                 self.passing_calls.push(info_with_metadata);
                 true
@@ -182,7 +194,8 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                     item.to_owned(),
                     has_raw_pointer_deref,
                     is_allowlisted,
-                    has_transmute,
+                    has_transmute_or_copy,
+                    important_args,
                 );
                 self.failing_calls.push(info_with_metadata);
                 false
@@ -190,10 +203,11 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
         }
     }
 
-    fn analyze_child(&mut self, instance: Instance<'tcx>) -> bool {
+    fn analyze_child(&mut self, instance: Instance<'tcx>, important_arg_idx: Vec<usize>) -> bool {
         let maybe_body_with_facts = substituted_mir(instance, self.tcx);
-        let important_args = (1..=num_args_for_instance(instance, self.tcx))
-            .map(|arg_num| Local::from_usize(arg_num))
+        let important_args = important_arg_idx
+            .iter()
+            .map(|arg_num| Local::from_usize(arg_num + 1))
             .collect_vec();
 
         match maybe_body_with_facts.clone() {
@@ -219,7 +233,7 @@ impl<'tcx> ScrutinizerAnalysis<'tcx> {
                                     if self.stack.contains(&child_item) {
                                         return true;
                                     } else {
-                                        self.analyze_child(child_item)
+                                        self.analyze_child(child_item, important_arg_idx.clone())
                                     }
                                 })
                                 .collect_vec()
