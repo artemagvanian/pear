@@ -15,6 +15,7 @@ use serde::Serialize;
 
 extern crate unicode_segmentation;
 use unicode_segmentation::UnicodeSegmentation;
+use regex::Regex;
 
 use crate::{
     reachability::{ImplType, Node, Usage},
@@ -124,6 +125,9 @@ pub struct TransitiveRefinedSubGraph<'tcx> {
     // Maps children to parents.
     #[serde(serialize_with = "serialize_transitive_refined_edges")]
     backward_edges: FxHashMap<Instance<'tcx>, FxHashSet<TransitiveRefinedNode<'tcx>>>,
+    // Maps parents to children
+    #[serde(skip_serializing)]
+    forward_edges: FxHashMap<Instance<'tcx>, FxHashSet<Instance<'tcx>>>,
     crate_boundaries: Vec<TransitiveRefinedNode<'tcx>>,
 }
 
@@ -132,6 +136,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         Self {
             child_of_interest: child,
             backward_edges: FxHashMap::default(),
+            forward_edges: FxHashMap::default(),
             crate_boundaries: vec![],
         }
     }
@@ -143,12 +148,76 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
     pub fn crate_boundaries(&self) -> Vec<TransitiveRefinedNode<'tcx>> {
         self.crate_boundaries.clone()
     }
+ 
+    pub fn cleanup_edges(&mut self, 
+        instance: &Instance<'tcx>, 
+        root_def_id: DefId,
+        visited: &mut FxHashSet<Instance<'tcx>>
+    ) -> bool {
+        visited.insert(*instance);
+        
+        let parents: FxHashSet<TransitiveRefinedNode> = match self.backward_edges.get(&instance) {
+            Some(map) => if map.is_empty() {FxHashSet::default()} else {map.clone()},
+            None => FxHashSet::default()
+        };
+        
+        let mut is_circular = false;
+        if parents.len() == 1 {
+            for par in parents.iter() {
+                if par.node() == *instance {
+                    is_circular = true;
+                }
+            }
+        }
+
+        if parents.is_empty() || is_circular {
+            if instance.def_id() != root_def_id {
+                self.backward_edges.remove(&instance);
+                // do check for children
+                let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
+                if let Some(child_nodes) = self.forward_edges.get(&instance) {
+                    children = child_nodes.clone();
+                }
+                children.iter().for_each(|child| {
+                    if let Some(set) = self.backward_edges.get(&child) {
+                        let new_set = FxHashSet::from_iter(set.iter().filter(|&node| node.node() != *instance).cloned());
+                        self.backward_edges.insert(*child, new_set);                            
+                    }
+                });
+                self.forward_edges.insert(*instance, FxHashSet::default());
+                children.iter().for_each(|child| {self.cleanup_edges(child, root_def_id, visited);});
+            }
+        } else {
+            parents.iter()
+                .for_each(|parent| {
+                if !self.forward_edges.contains_key(&parent.node()) {
+                    let new_set: FxHashSet<Instance> = FxHashSet::default();
+                    self.forward_edges.insert(parent.node(), new_set);
+                }
+                if let Some(map) = self.forward_edges.get_mut(&parent.node()) {
+                    map.insert(*instance);
+                }
+                if !visited.contains(&parent.node()) {
+                    self.cleanup_edges(&parent.node(), root_def_id, visited);
+                }
+            });
+        } 
+
+        if self.backward_edges.is_empty() {
+            true
+        } else {false}
+    }
 
     fn add_edge(&mut self, child: &Instance<'tcx>, parent: &TransitiveRefinedNode<'tcx>) {
         self.backward_edges
             .entry(child.clone())
             .or_default()
             .insert(parent.clone());
+
+        self.forward_edges
+            .entry(parent.node().clone())
+            .or_default()
+            .insert(child.clone());
     }
 }
 
@@ -235,6 +304,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         instance: &Instance<'tcx>,
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
+        allow_std: bool,
     ) -> TransitiveRefinedSubGraph<'tcx> {
         let tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> =
             self.precalculate_parents();
@@ -251,6 +321,8 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             &mut subgraph,
             &mut visited,
             None,
+            allow_std,
+            0
         );
         subgraph
     }
@@ -266,6 +338,8 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         subgraph: &mut TransitiveRefinedSubGraph<'tcx>,
         visited: &mut FxHashSet<(Instance<'tcx>, bool, Option<TransitiveRefinedNode<'tcx>>)>,
         crate_edge: Option<TransitiveRefinedNode<'tcx>>,
+        allow_std: bool,
+        depth: u32,
     ) {
         // Skip if we've been to this instance.
         if visited.contains(&(*instance, instance_refined, crate_edge)) {
@@ -273,24 +347,60 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         }
         // Mark this instance as visited.
         visited.insert((*instance, instance_refined, crate_edge));
+        let mut path = tcx.def_path_str(instance.def_id());
+        // preserve only fn path to be implemented (so we can allowlist for all impls of the same fn)
+        if path.contains("as") {
+            let imp = path.rsplit_once("as");
+            match imp {
+                Some((_, str_two)) => path = str_two.to_string(),
+                None => ()
+            };
+        }
 
-        let path = tcx.def_path_str(instance.def_id());
         let tokens = path.unicode_words().collect::<Vec<&str>>();
-        
-        // compare prefixes
+     
+        // compare prefixes  - do without streams!! (aka no unicode_words)
         for val in filter.iter() {
             let allowed_tokens: Vec<&str> = val.unicode_words().collect::<Vec<&str>>();
-
-            let matching = allowed_tokens.iter()
+            let matching: usize = allowed_tokens.iter()
                 .zip(tokens.iter())
                 .filter(|(allowed_tokens, tokens)| allowed_tokens == tokens)
                 .count();
-
             if matching == allowed_tokens.len() {
                 return;
             }
         }
-        
+
+        // Don't recur into std fns that don't have any documented panics
+        if allow_std {
+            if (tokens[0] == "std") | (tokens[0] == "alloc") | (tokens[0] == "core") {
+                let re = Regex::new("# Panics");
+                if let Ok(reg) = re {
+                    let attrs = tcx.get_attrs_unchecked(instance.def_id());
+                    let mut doc_string = String::from("");
+                    for attr in attrs {
+                        if let Some(str) = attr.doc_str() {
+                            doc_string.push_str(str.as_str());
+                        }
+                    }
+
+                    /*
+                    
+                    && tcx.def_path_str(instance.def_id()) != "std::rt::panic_fmt" 
+                    && tcx.def_path_str(instance.def_id()) != "core::panicking::panic_fmt"
+                    && tcx.def_path_str(instance.def_id()) != "std::result::unwrap_failed"
+                    && tcx.def_path_str(instance.def_id()) != "core::panicking::panic" 
+                    && tcx.def_path_str(instance.def_id()) != "alloc::raw_vec::capacity_overflow */
+
+                    // doesn't have a documented panic -> allowlist
+                    if !reg.is_match(&doc_string) 
+                    && depth > 1 {
+                        return;
+                    } 
+                }
+            }
+        }
+
         // Don't recur into crates that are filtered.
         if filter.iter().any(|filtered_item: &String| {
             // Match filtered item's crate.
@@ -330,11 +440,11 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             // Each precalculated parent already carries the refinement status of its direct child,
             // but it may need to updated with the refinement status of a grandchild.
             let updated_parent_status = parent.is_refined || instance_refined;
-            let updated_parent = parent.update_is_refined(updated_parent_status);
+            let updated_parent: TransitiveRefinedNode<'_> = parent.update_is_refined(updated_parent_status);
             // Add the new edge to the subgraph.
             subgraph.add_edge(&instance, &updated_parent);
             // Once we hit a parent in the local crate, we store it and do not replace it again.
-            let crate_edge = crate_edge.or_else(|| {
+            let crate_edge: Option<TransitiveRefinedNode<'tcx>> = crate_edge.or_else(|| {
                 if parent.node.def_id().is_local() {
                     Some(parent)
                 } else {
@@ -354,6 +464,8 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
                     subgraph,
                     visited,
                     crate_edge,
+                    allow_std,
+                    depth + 1
                 );
                 stack.pop();
             }
@@ -366,8 +478,9 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         instance: Instance<'tcx>,
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
+        allow_std: bool,
     ) -> Vec<TransitiveRefinedNode<'tcx>> {
-        let subgraph = self.find_child_subgraph(&instance, filter, tcx);
+        let subgraph: TransitiveRefinedSubGraph<'_> = self.find_child_subgraph(&instance, filter, tcx, allow_std);
         subgraph.crate_boundaries
     }
 }
