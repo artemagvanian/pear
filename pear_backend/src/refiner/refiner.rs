@@ -154,7 +154,8 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
     }
 
     pub fn is_empty(&self) -> bool {
-        return self.backward_edges.is_empty();
+        return self.backward_edges.get(&self.child_of_interest).is_none() ||
+        self.forward_edges.get(&self.root_node).is_none()
     }
 
     fn is_circular(&self, 
@@ -177,54 +178,122 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         }
         return false
     }
- 
-    pub fn cleanup_edges(&mut self, 
-        instance: &Instance<'tcx>, 
-        root_def_id: DefId,
-        visited: &mut FxHashSet<Instance<'tcx>>
-    ) -> bool {
-        visited.insert(*instance);
+
+    fn find_reachable(&mut self, 
+        can_reach: &mut FxHashSet<Instance<'tcx>>,
+        curr_node: &Instance<'tcx>,
+    ) {
+        if *curr_node == self.child_of_interest() { return; }
         
-        let parents: FxHashSet<TransitiveRefinedNode> = match self.backward_edges.get(&instance) {
-            Some(map) => if map.is_empty() {FxHashSet::default()} else {map.clone()},
+        let children: FxHashSet<Instance> = match self.forward_edges.get(&curr_node) {
+            Some(map) => map.clone(),
             None => FxHashSet::default()
         };
-        
-        if parents.is_empty() || self.is_circular(&parents, instance) {
-            if instance.def_id() != root_def_id {
-                self.backward_edges.remove(&instance);
-                // do check for children
-                let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
-                if let Some(child_nodes) = self.forward_edges.get(&instance) {
-                    children = child_nodes.clone();
-                }
-                children.iter().for_each(|child| {
-                    if let Some(set) = self.backward_edges.get(&child) {
-                        let new_set = FxHashSet::from_iter(set.iter().filter(|&node| node.node() != *instance).cloned());
-                        self.backward_edges.insert(*child, new_set);                            
-                    }
-                });
-                self.forward_edges.remove(instance);
-                children.iter().for_each(|child| {self.cleanup_edges(child, root_def_id, visited);});
-            }
-        } else {
-            parents.iter()
-                .for_each(|parent| {
-                if !self.forward_edges.contains_key(&parent.node()) {
-                    let new_set: FxHashSet<Instance> = FxHashSet::default();
-                    self.forward_edges.insert(parent.node(), new_set);
-                }
-                if let Some(map) = self.forward_edges.get_mut(&parent.node()) {
-                    map.insert(*instance);
-                }
-                if !visited.contains(&parent.node()) {
-                    self.cleanup_edges(&parent.node(), root_def_id, visited);
-                }
-            });
-        } 
 
-        self.backward_edges.is_empty()
+        children.iter().for_each(|child| {
+            if child != curr_node && !can_reach.contains(child) {
+                can_reach.insert(*child);
+                self.find_reachable(can_reach, child);
+            }
+        });
     }
+
+    pub fn cleanup_unreachable(&mut self, 
+        tcx: TyCtxt<'tcx>,
+    ) {
+        let mut can_reach: FxHashSet<Instance> = FxHashSet::default();
+        self.find_reachable(&mut can_reach, &self.root_node.clone());
+        can_reach.insert(self.root_node.clone());
+
+        let mut nodes = FxHashSet::default();
+
+        self.backward_edges.clone().into_keys().for_each(|node|
+            { nodes.insert(node); });
+        self.forward_edges.clone().into_keys().for_each(|node|
+            { nodes.insert(node); });
+
+        for node in nodes {
+            if !can_reach.contains(&node) {
+                self.remove_node(&node, tcx);
+            }
+        }
+    }
+
+    fn remove_node(&mut self, 
+        instance: &Instance<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) {
+        let mut check = false;
+        if tcx.def_path_str(instance.def_id()) == "std::io::stdio::print_to" {
+            check = true;
+        }
+        self.backward_edges.remove(&instance);
+        // do check for children
+        let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
+        if let Some(child_nodes) = self.forward_edges.get(&instance) {
+            children = child_nodes.clone();
+        }
+
+        children.iter().for_each(|child| {
+
+            if tcx.def_path_str(child.def_id()) == "std::ptr::drop_in_place::<std::io::Error> - shim(Some(std::io::Error))" {
+                println!("{:?}", self.backward_edges.get(&child));
+            }
+
+
+            if let Some(set) = self.backward_edges.get(&child) {
+                let new_set = FxHashSet::from_iter(set.iter().filter(|&node| node.node() != *instance).cloned());
+                self.backward_edges.insert(*child, new_set);                       
+            }
+
+            if tcx.def_path_str(child.def_id()) == "std::ptr::drop_in_place::<std::io::Error> - shim(Some(std::io::Error))" {
+                println!("{:?}", self.backward_edges.get(&child));
+            }
+
+        });
+        self.forward_edges.remove(instance);
+    }
+ 
+    // pub fn cleanup_edges(&mut self, 
+    //     instance: &Instance<'tcx>, 
+    //     root_def_id: DefId,
+    //     visited: &mut FxHashSet<Instance<'tcx>>
+    // ) -> bool {
+    //     let parents: FxHashSet<TransitiveRefinedNode> = match self.backward_edges.get(&instance) {
+    //         Some(map) => if map.is_empty() {FxHashSet::default()} else {map.clone()},
+    //         None => FxHashSet::default()
+    //     };
+       
+    //     visited.insert(*instance);
+    //     if parents.is_empty() || self.is_circular(&parents, instance) {
+    //         if instance.def_id() != root_def_id {
+    //             self.remove_node(instance);
+    //             let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
+    //             if let Some(child_nodes) = self.forward_edges.get(&instance) {
+    //                 children = child_nodes.clone();
+    //             }
+    //             children.iter().for_each(|child| {
+    //                 if visited.contains(&child) { visited.remove(&child);}; // needs to be re-checked
+    //                 self.cleanup_edges(child, root_def_id, visited);});
+    //         }
+    //     } else {
+    //         parents.iter()
+    //             .for_each(|parent| {
+    //             if !self.forward_edges.contains_key(&parent.node()) {
+    //                 let new_set: FxHashSet<Instance> = FxHashSet::default();
+    //                 self.forward_edges.insert(parent.node(), new_set);
+    //             }
+    //             if let Some(map) = self.forward_edges.get_mut(&parent.node()) {
+    //                 map.insert(*instance);
+    //             }
+    //             if !visited.contains(&parent.node()) {
+    //                 self.cleanup_edges(&parent.node(), root_def_id, visited);
+    //             }
+    //         });
+    //     } 
+
+    //     self.backward_edges.is_empty()
+    // }
 
     pub fn allowlist_stdlib(&mut self,         
         tcx: TyCtxt<'tcx>,
@@ -232,6 +301,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         re: Result<Regex, regex::Error>,
         depth: u32,
     ){ 
+        let panic_re = Regex::new("panic").unwrap();
         let path = tcx.def_path_str(head.def_id());
         let tokens = path.unicode_words().collect::<Vec<&str>>();
 
@@ -239,6 +309,8 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
             Some(map) => {map.clone()}
             None => {FxHashSet::default()}
         };
+
+        if panic_re.find(path.as_str()).is_some() { return; } // don't allowlist, i.e., panic_fmt
 
         if ((tokens[0] == "std") || (tokens[0] == "alloc") || (tokens[0] == "core")) 
         && !self.is_local(head){
@@ -440,11 +512,12 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
             subgraph.allowlist_stdlib(tcx, root, reg, 0);
         }
 
-        let mut visited = FxHashSet::default();
-        subgraph.cleanup_edges(
-            &subgraph.child_of_interest(), 
-            root.def_id(),
-            &mut visited);
+        //let mut visited = FxHashSet::default();
+        // subgraph.cleanup_edges(
+        //     &subgraph.child_of_interest(), 
+        //     root.def_id(),
+        //     &mut visited);
+        subgraph.cleanup_unreachable(tcx);
         subgraph.cleanup_crate_bounds();
         subgraph
     }
@@ -543,7 +616,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
                     None
                 }
             });
-
+            
             if !stack.contains(&updated_parent.node) {
                 stack.push(updated_parent.node);
                 self.find_child_subgraph_rec(
