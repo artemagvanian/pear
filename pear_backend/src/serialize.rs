@@ -60,6 +60,16 @@ where
     serializer.serialize_str(instance.to_string().as_str())
 }
 
+pub fn serialize_panic_dict<'tcx, S>(
+    panic_dict: &FxHashMap<Instance<'tcx>, FxHashSet<Instance<'tcx>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> 
+where S: Serializer
+{
+    serializer.collect_map(panic_dict.iter().map(|(k, v)| (k.to_string(), 
+        v.iter().map(|val| val.to_string()).collect::<FxHashSet<String>>())))
+}
+
 pub fn serialize_instance_vec<S>(
     instances: &Vec<Instance>,
     serializer: S,

@@ -23,10 +23,16 @@ use crate::{
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
     serialize::{
         serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
-        serialize_transitive_refined_edges,
+        serialize_transitive_refined_edges, serialize_panic_dict,
     },
     utils::{erase_regions_in_sig, fn_trait_method_sig},
 };
+
+#[derive(Clone, Serialize)]
+pub struct PanicDict<'tcx> {
+    #[serde(serialize_with = "serialize_panic_dict")]
+    pub panic_dict: FxHashMap<Instance<'tcx>, FxHashSet<Instance<'tcx>>>,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize)]
 pub enum RefinedNode<'tcx> {
@@ -198,8 +204,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         });
     }
 
-    pub fn cleanup_unreachable(&mut self, 
-        tcx: TyCtxt<'tcx>,
+    pub fn cleanup_unreachable(&mut self
     ) {
         let mut can_reach: FxHashSet<Instance> = FxHashSet::default();
         self.find_reachable(&mut can_reach, &self.root_node.clone());
@@ -214,19 +219,38 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
 
         for node in nodes {
             if !can_reach.contains(&node) {
-                self.remove_node(&node, tcx);
+                self.remove_node(&node);
             }
+        }
+    }
+
+    fn build_panic_dict(&mut self, 
+        panics: &mut PanicDict<'tcx>,
+    ) {
+        // for node in self.crate_boundaries().iter() {
+        //     println!("NODE: {:?}", node);
+        //     self.forward_edges.get(&node.node()).iter().for_each(|child| {
+        //         println!("CHILD {:?}", child);
+        //     })
+        // }
+
+        for caller in self.crate_boundaries().iter() {
+            let children: &FxHashSet<Instance<'tcx>> = self.forward_edges.get(&caller.node()).unwrap();
+            children.iter().for_each(|panicable| {
+                if let Some(set) = panics.panic_dict.get_mut(&panicable) {
+                    set.insert(caller.node());
+                } else {
+                    let mut new_set = FxHashSet::default();
+                    new_set.insert(caller.node());
+                    panics.panic_dict.insert(*panicable, new_set);
+                }
+            })
         }
     }
 
     fn remove_node(&mut self, 
         instance: &Instance<'tcx>,
-        tcx: TyCtxt<'tcx>,
     ) {
-        let mut check = false;
-        if tcx.def_path_str(instance.def_id()) == "std::io::stdio::print_to" {
-            check = true;
-        }
         self.backward_edges.remove(&instance);
         // do check for children
         let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
@@ -235,21 +259,10 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         }
 
         children.iter().for_each(|child| {
-
-            if tcx.def_path_str(child.def_id()) == "std::ptr::drop_in_place::<std::io::Error> - shim(Some(std::io::Error))" {
-                println!("{:?}", self.backward_edges.get(&child));
-            }
-
-
             if let Some(set) = self.backward_edges.get(&child) {
                 let new_set = FxHashSet::from_iter(set.iter().filter(|&node| node.node() != *instance).cloned());
                 self.backward_edges.insert(*child, new_set);                       
             }
-
-            if tcx.def_path_str(child.def_id()) == "std::ptr::drop_in_place::<std::io::Error> - shim(Some(std::io::Error))" {
-                println!("{:?}", self.backward_edges.get(&child));
-            }
-
         });
         self.forward_edges.remove(instance);
     }
@@ -487,6 +500,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
         allow_std: bool,
+        panic_dict: &mut PanicDict<'tcx>,
     ) -> TransitiveRefinedSubGraph<'tcx> {
         let tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> =
             self.precalculate_parents();
@@ -517,8 +531,9 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         //     &subgraph.child_of_interest(), 
         //     root.def_id(),
         //     &mut visited);
-        subgraph.cleanup_unreachable(tcx);
+        subgraph.cleanup_unreachable();
         subgraph.cleanup_crate_bounds();
+        subgraph.build_panic_dict(panic_dict);
         subgraph
     }
 
@@ -643,8 +658,9 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
         allow_std: bool,
+        panic_dict: &mut PanicDict<'tcx>,
     ) -> Vec<TransitiveRefinedNode<'tcx>> {
-        let subgraph: TransitiveRefinedSubGraph<'_> = self.find_child_subgraph(&instance, filter, tcx, allow_std);
+        let subgraph: TransitiveRefinedSubGraph<'_> = self.find_child_subgraph(&instance, filter, tcx, allow_std, panic_dict);
         subgraph.crate_boundaries
     }
 }
