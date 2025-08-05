@@ -23,7 +23,7 @@ use crate::{
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
     serialize::{
         serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
-        serialize_transitive_refined_edges, serialize_panic_dict,
+        serialize_transitive_refined_edges, serialize_panic_dict, serialize_callers_and_spans
     },
     utils::{erase_regions_in_sig, fn_trait_method_sig},
 };
@@ -31,7 +31,17 @@ use crate::{
 #[derive(Clone, Serialize)]
 pub struct PanicDict<'tcx> {
     #[serde(serialize_with = "serialize_panic_dict")]
-    pub panic_dict: FxHashMap<Instance<'tcx>, FxHashSet<Instance<'tcx>>>,
+    //pub panic_dict: FxHashMap<Instance<'tcx>, (bool, String, FxHashSet<Instance<'tcx>>)>,
+    pub panic_dict: FxHashMap<Instance<'tcx>, PanicEntry<'tcx>>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PanicEntry<'tcx> {
+    #[serde(serialize_with = "serialize_callers_and_spans")]
+    callers_and_spans: FxHashSet<(Instance<'tcx>, Span)>,
+    is_in_crate: bool,
+    has_documented_panic: bool, 
+    doc_str: String,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize)]
@@ -224,25 +234,50 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         }
     }
 
-    fn build_panic_dict(&mut self, 
-        panics: &mut PanicDict<'tcx>,
-    ) {
-        // for node in self.crate_boundaries().iter() {
-        //     println!("NODE: {:?}", node);
-        //     self.forward_edges.get(&node.node()).iter().for_each(|child| {
-        //         println!("CHILD {:?}", child);
-        //     })
-        // }
+    fn has_documented_panic(&mut self, 
+        instance: &Instance,
+        tcx: TyCtxt,
+    ) -> (bool, String) {
+        let panic_re = Regex::new("# Panics").expect("Regex failure");
+        let attrs = tcx.get_attrs_unchecked(instance.def_id());
+        let mut doc_string = String::from("");
+        for attr in attrs {
+            if let Some(str) = attr.doc_str() {
+                doc_string.push_str(str.as_str());
+            }
+        }
 
+        if panic_re.is_match(&doc_string) {
+            return (true, doc_string.to_string())
+        }
+        return (false, String::from(""))
+    }
+
+    pub fn build_panic_dict(&mut self, 
+        panics: &mut PanicDict<'tcx>,
+        tcx: TyCtxt,
+    ) {
+        // add if in stdlib
         for caller in self.crate_boundaries().iter() {
-            let children: &FxHashSet<Instance<'tcx>> = self.forward_edges.get(&caller.node()).unwrap();
+            let reg: Result<Regex, regex::Error> = Regex::new("# Panics");
+            let children: &FxHashSet<Instance<'tcx>> = &self.forward_edges.get(&caller.node()).unwrap().clone();
             children.iter().for_each(|panicable| {
-                if let Some(set) = panics.panic_dict.get_mut(&panicable) {
-                    set.insert(caller.node());
+
+                println!("CALLER {:?}", caller.node());
+                println!("{:?}", tcx.def_ident_span(panicable.def_id()));
+
+                if let Some(entry) = panics.panic_dict.get_mut(&panicable) {
+                    entry.callers_and_spans.insert((caller.node(), caller.span()));
                 } else {
-                    let mut new_set = FxHashSet::default();
-                    new_set.insert(caller.node());
-                    panics.panic_dict.insert(*panicable, new_set);
+                    let (doc_panic, doc_str) = self.has_documented_panic(&panicable, tcx);
+                    let mut entry = PanicEntry{
+                        callers_and_spans:FxHashSet::default(),
+                        is_in_crate: panicable.def_id().is_local(),
+                        has_documented_panic: doc_panic,
+                        doc_str: doc_str,
+                    };
+
+                    panics.panic_dict.insert(*panicable, entry);
                 }
             })
         }
@@ -327,20 +362,13 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
 
         if ((tokens[0] == "std") || (tokens[0] == "alloc") || (tokens[0] == "core")) 
         && !self.is_local(head){
-            if let Ok(reg) = re {
-                let attrs = tcx.get_attrs_unchecked(head.def_id());
-                let mut doc_string = String::from("");
-                for attr in attrs {
-                    if let Some(str) = attr.doc_str() {
-                        doc_string.push_str(str.as_str());
-                    }
-                }
-                // we've hit a stdlib fn with no documented panic -> remove the whole call chain 
-                if !reg.is_match(&doc_string) && *head != self.child_of_interest {
-                    self.remove_node_upwards(tcx, head, );
-                } else { 
-                    return; } // we've hit a stdlib fn with a documented panic -> stop checking children
-            }
+              
+            // we've hit a stdlib fn with no documented panic -> remove the whole call chain 
+            if !self.has_documented_panic(head, tcx).0 && *head != self.child_of_interest {
+                self.remove_node_upwards(tcx, head, );
+            } else { 
+                return; } // we've hit a stdlib fn with a documented panic -> stop checking children
+            
         } else if depth > 20 {
             return;
         } else {
@@ -500,7 +528,6 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         filter: &Vec<String>,
         tcx: TyCtxt<'tcx>,
         allow_std: bool,
-        panic_dict: &mut PanicDict<'tcx>,
     ) -> TransitiveRefinedSubGraph<'tcx> {
         let tainted_parents: FxHashMap<Instance<'tcx>, Vec<TransitiveRefinedNode<'tcx>>> =
             self.precalculate_parents();
@@ -525,15 +552,9 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         if allow_std { 
             subgraph.allowlist_stdlib(tcx, root, reg, 0);
         }
-
-        //let mut visited = FxHashSet::default();
-        // subgraph.cleanup_edges(
-        //     &subgraph.child_of_interest(), 
-        //     root.def_id(),
-        //     &mut visited);
+        
         subgraph.cleanup_unreachable();
         subgraph.cleanup_crate_bounds();
-        subgraph.build_panic_dict(panic_dict);
         subgraph
     }
 
@@ -660,7 +681,8 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
         allow_std: bool,
         panic_dict: &mut PanicDict<'tcx>,
     ) -> Vec<TransitiveRefinedNode<'tcx>> {
-        let subgraph: TransitiveRefinedSubGraph<'_> = self.find_child_subgraph(&instance, filter, tcx, allow_std, panic_dict);
+        let mut subgraph: TransitiveRefinedSubGraph<'_> = self.find_child_subgraph(&instance, filter, tcx, allow_std);
+        subgraph.build_panic_dict(panic_dict, tcx);
         subgraph.crate_boundaries
     }
 }

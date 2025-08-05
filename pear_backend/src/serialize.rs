@@ -6,8 +6,9 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use serde::Serializer;
+use serde::ser::SerializeSeq;
 
-use crate::{reachability::Node, refiner::RefinedNode, TransitiveRefinedNode};
+use crate::{reachability::Node, refiner::RefinedNode, TransitiveRefinedNode, PanicEntry};
 
 pub fn serialize_def_id<S>(def_id: &DefId, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -61,13 +62,27 @@ where
 }
 
 pub fn serialize_panic_dict<'tcx, S>(
-    panic_dict: &FxHashMap<Instance<'tcx>, FxHashSet<Instance<'tcx>>>,
+    panic_dict: &FxHashMap<Instance<'tcx>, PanicEntry>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> 
 where S: Serializer
 {
     serializer.collect_map(panic_dict.iter().map(|(k, v)| (k.to_string(), 
-        v.iter().map(|val| val.to_string()).collect::<FxHashSet<String>>())))
+        v)))
+}
+
+pub fn serialize_callers_and_spans<'tcx, S>(
+    callers_and_spans: &FxHashSet<(Instance<'tcx>, Span)>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where S: Serializer
+{
+    let mut seq = serializer.serialize_seq(Some(callers_and_spans.len()))?;
+    for element in callers_and_spans {
+        let s = format!("{element:?}");
+        seq.serialize_element(&s)?;
+    }
+    seq.end()
 }
 
 pub fn serialize_instance_vec<S>(
