@@ -349,6 +349,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
     ){ 
         let panic_re = Regex::new("panic").unwrap();
         let path = tcx.def_path_str(head.def_id());
+        let tokens = path.unicode_words().collect::<Vec<&str>>();
 
         let children: FxHashSet<Instance> = match self.forward_edges.get(&head) {
             Some(map) => {map.clone()}
@@ -357,7 +358,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
 
         if panic_re.find(path.as_str()).is_some() { return; } // don't allowlist, i.e., panic_fmt
 
-        if self.is_in_stdlib(&head, tcx) && !self.is_local(head){
+        if ((tokens[0] == "std") || (tokens[0] == "alloc") || (tokens[0] == "core")) && !self.is_local(head){
             // we've hit a stdlib fn with no documented panic -> remove the whole call chain 
             if !self.has_documented_panic(head, tcx).0 && *head != self.child_of_interest {
                 self.remove_node_upwards(tcx, head, );
