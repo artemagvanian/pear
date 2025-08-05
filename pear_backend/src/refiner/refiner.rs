@@ -1,5 +1,5 @@
 use log::warn;
-use std::fs;
+use std::{fs};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::{def_id::DefId, LangItem};
@@ -40,6 +40,7 @@ pub struct PanicEntry<'tcx> {
     #[serde(serialize_with = "serialize_callers_and_spans")]
     callers_and_spans: FxHashSet<(Instance<'tcx>, Span)>,
     is_in_crate: bool,
+    is_in_stdlib: bool,
     has_documented_panic: bool, 
     doc_str: String,
 }
@@ -234,11 +235,40 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         }
     }
 
+    /*
+    checks if the given instance is in stdlib, 
+    including if the instance is a fn from an impl of a trait
+    defined in stdlib
+     */
+    fn is_in_stdlib(&mut self, 
+        instance: &Instance<'tcx>, 
+        tcx: TyCtxt,
+    ) -> bool {
+        let mut path = tcx.def_path_str(instance.def_id());
+
+        // preserve only fn path to be implemented (so we can allowlist for all impls of the same fn)
+        if path.contains(" as ") {
+            let imp: Option<(_, _)> = path.rsplit_once("as");
+            match imp {
+                Some((_, str_two)) => path = str_two.to_string(),
+                None => ()
+            };
+        }
+
+        let tokens = path.unicode_words().collect::<Vec<&str>>();
+        if ((tokens[0] == "std") || (tokens[0] == "alloc") || (tokens[0] == "core")) 
+        && !self.is_local(instance) { return true };
+
+        false
+    }
+
     fn has_documented_panic(&mut self, 
         instance: &Instance,
         tcx: TyCtxt,
     ) -> (bool, String) {
-        let panic_re = Regex::new("# Panics").expect("Regex failure");
+        let panic_re = Regex::new(r"# Panics").expect("Regex failure");
+        let panic_full_re = Regex::new(r"(# Panics\s.*)(#)").expect("Regex failure");
+        let panic_full_end_re = Regex::new(r"# Panics\s.*").expect("Regex failure");
         let attrs = tcx.get_attrs_unchecked(instance.def_id());
         let mut doc_string = String::from("");
         for attr in attrs {
@@ -248,7 +278,13 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         }
 
         if panic_re.is_match(&doc_string) {
-            return (true, doc_string.to_string())
+            let str = panic_full_re.captures(&doc_string);
+            if str.is_some() {
+                return (true, str.unwrap()[1].to_string())
+            } else {
+                let panic_str = panic_full_end_re.find(&doc_string).unwrap();
+                return (true, panic_str.as_str().to_string());
+            }
         }
         return (false, String::from(""))
     }
@@ -258,28 +294,31 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         tcx: TyCtxt,
     ) {
         // add if in stdlib
-        for caller in self.crate_boundaries().iter() {
-            let reg: Result<Regex, regex::Error> = Regex::new("# Panics");
-            let children: &FxHashSet<Instance<'tcx>> = &self.forward_edges.get(&caller.node()).unwrap().clone();
-            children.iter().for_each(|panicable| {
+        let mut immediate_children: FxHashSet<Instance> = FxHashSet::default();
+        self.crate_boundaries().iter().for_each(|caller| 
+            immediate_children.extend(self.forward_edges.get(&caller.node()).unwrap().clone()));
+        
+        // get first not-in-crate paths
+        for child in immediate_children {
+            for par in self.backward_edges.get(&child).unwrap().clone().iter() {
+                if self.crate_boundaries().contains(&par) {
+                    if let Some(entry) = panics.panic_dict.get_mut(&child) {
+                        entry.callers_and_spans.insert((par.node(), par.span()));
+                    } else {
+                        let (doc_panic, doc_str) = self.has_documented_panic(&child, tcx);
+                        let mut entry = PanicEntry{
+                            callers_and_spans: FxHashSet::default(),
+                            is_in_crate: child.def_id().is_local(),
+                            is_in_stdlib: self.is_in_stdlib(&child, tcx),
+                            has_documented_panic: doc_panic,
+                            doc_str: doc_str,
+                        };
 
-                println!("CALLER {:?}", caller.node());
-                println!("{:?}", tcx.def_ident_span(panicable.def_id()));
-
-                if let Some(entry) = panics.panic_dict.get_mut(&panicable) {
-                    entry.callers_and_spans.insert((caller.node(), caller.span()));
-                } else {
-                    let (doc_panic, doc_str) = self.has_documented_panic(&panicable, tcx);
-                    let mut entry = PanicEntry{
-                        callers_and_spans:FxHashSet::default(),
-                        is_in_crate: panicable.def_id().is_local(),
-                        has_documented_panic: doc_panic,
-                        doc_str: doc_str,
-                    };
-
-                    panics.panic_dict.insert(*panicable, entry);
+                        entry.callers_and_spans.insert((par.node(), par.span()));
+                        panics.panic_dict.insert(child, entry);
+                    }
                 }
-            })
+            };
         }
     }
 
@@ -301,47 +340,6 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         });
         self.forward_edges.remove(instance);
     }
- 
-    // pub fn cleanup_edges(&mut self, 
-    //     instance: &Instance<'tcx>, 
-    //     root_def_id: DefId,
-    //     visited: &mut FxHashSet<Instance<'tcx>>
-    // ) -> bool {
-    //     let parents: FxHashSet<TransitiveRefinedNode> = match self.backward_edges.get(&instance) {
-    //         Some(map) => if map.is_empty() {FxHashSet::default()} else {map.clone()},
-    //         None => FxHashSet::default()
-    //     };
-       
-    //     visited.insert(*instance);
-    //     if parents.is_empty() || self.is_circular(&parents, instance) {
-    //         if instance.def_id() != root_def_id {
-    //             self.remove_node(instance);
-    //             let mut children: FxHashSet<Instance<'tcx>> = FxHashSet::default();
-    //             if let Some(child_nodes) = self.forward_edges.get(&instance) {
-    //                 children = child_nodes.clone();
-    //             }
-    //             children.iter().for_each(|child| {
-    //                 if visited.contains(&child) { visited.remove(&child);}; // needs to be re-checked
-    //                 self.cleanup_edges(child, root_def_id, visited);});
-    //         }
-    //     } else {
-    //         parents.iter()
-    //             .for_each(|parent| {
-    //             if !self.forward_edges.contains_key(&parent.node()) {
-    //                 let new_set: FxHashSet<Instance> = FxHashSet::default();
-    //                 self.forward_edges.insert(parent.node(), new_set);
-    //             }
-    //             if let Some(map) = self.forward_edges.get_mut(&parent.node()) {
-    //                 map.insert(*instance);
-    //             }
-    //             if !visited.contains(&parent.node()) {
-    //                 self.cleanup_edges(&parent.node(), root_def_id, visited);
-    //             }
-    //         });
-    //     } 
-
-    //     self.backward_edges.is_empty()
-    // }
 
     pub fn allowlist_stdlib(&mut self,         
         tcx: TyCtxt<'tcx>,
@@ -351,7 +349,6 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
     ){ 
         let panic_re = Regex::new("panic").unwrap();
         let path = tcx.def_path_str(head.def_id());
-        let tokens = path.unicode_words().collect::<Vec<&str>>();
 
         let children: FxHashSet<Instance> = match self.forward_edges.get(&head) {
             Some(map) => {map.clone()}
@@ -360,9 +357,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
 
         if panic_re.find(path.as_str()).is_some() { return; } // don't allowlist, i.e., panic_fmt
 
-        if ((tokens[0] == "std") || (tokens[0] == "alloc") || (tokens[0] == "core")) 
-        && !self.is_local(head){
-              
+        if self.is_in_stdlib(&head, tcx) && !self.is_local(head){
             // we've hit a stdlib fn with no documented panic -> remove the whole call chain 
             if !self.has_documented_panic(head, tcx).0 && *head != self.child_of_interest {
                 self.remove_node_upwards(tcx, head, );
@@ -582,7 +577,7 @@ impl<'tcx> RefinedUsageGraph<'tcx> {
 
         // preserve only fn path to be implemented (so we can allowlist for all impls of the same fn)
         if path.contains("as") {
-            let imp = path.rsplit_once("as");
+            let imp: Option<(_, _)> = path.rsplit_once("as");
             match imp {
                 Some((_, str_two)) => path = str_two.to_string(),
                 None => ()
