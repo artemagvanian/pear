@@ -1,11 +1,12 @@
 use itertools::Itertools;
-use rustc_hir::{def_id::DefId, Unsafety};
+use rustc_hir::{def_id::DefId, Safety};
 use rustc_middle::ty::{self, FnSig, GenericArgsRef, PolyFnSig, TyCtxt};
-use rustc_target::spec::abi::Abi;
+//use rustc_target::spec::Abi;
+use rustc_public::ty::Abi;
 
 /// Erases all regions in the signature since we do not care about them when performing matching.
 pub fn erase_regions_in_sig<'tcx>(poly_fn_sig: PolyFnSig<'tcx>, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
-    tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(poly_fn_sig))
+    tcx.instantiate_bound_regions_with_erased(tcx.erase_and_anonymize_regions(poly_fn_sig))
 }
 
 /// Computes function signature of a method of Fn-like trait.
@@ -35,7 +36,7 @@ pub fn fn_trait_method_sig<'tcx>(
                         (self_arg, maybe_self_ty)
                     }
                     // Sometimes the Self argument can be boxed, need to unbox it.
-                    _ if maybe_self_ty.is_box() => (maybe_self_ty.boxed_ty(), item_args[1]),
+                    _ if maybe_self_ty.is_box() => (maybe_self_ty.boxed_ty().unwrap(), item_args[1]),
                     // Sometimes the Self argument can be a ref, need to deref it.
                     _ if maybe_self_ty.is_ref() => (maybe_self_ty.peel_refs(), item_args[1]),
                     _ => (maybe_self_ty, item_args[1]),
@@ -48,10 +49,13 @@ pub fn fn_trait_method_sig<'tcx>(
                     erase_regions_in_sig(tcx.fn_sig(def_id).instantiate(tcx, args), tcx)
                 }
                 ty::Closure(_, closure_args) => erase_regions_in_sig(
-                    tcx.signature_unclosure(closure_args.as_closure().sig(), Unsafety::Normal),
+                    tcx.signature_unclosure(closure_args.as_closure().sig(), Safety::Safe),
                     tcx,
                 ),
-                ty::FnPtr(poly_fn_sig) => erase_regions_in_sig(*poly_fn_sig, tcx),
+                ty::FnPtr(binder, fn_sig_tys) => {
+                    let poly_fn_sig = binder.with(*fn_sig_tys);
+                    erase_regions_in_sig(poly_fn_sig, tcx)
+                }
                 // If we have a trait object as Self, need to use generics to reconstruct the
                 // signature.
                 ty::Dynamic(bounds, ..) => {
@@ -66,10 +70,10 @@ pub fn fn_trait_method_sig<'tcx>(
                         .map(|p| p.map_bound(|p| p.term.ty().unwrap()))
                         .unwrap();
                     // Inputs are provided as Args generic.
-                    let inputs = tcx.erase_regions(args_arg.tuple_fields());
+                    let inputs = tcx.erase_and_anonymize_regions(args_arg.tuple_fields());
                     let output =
-                        tcx.instantiate_bound_regions_with_erased(tcx.erase_regions(output_ty));
-                    tcx.mk_fn_sig(inputs, output, false, Unsafety::Normal, Abi::Rust)
+                        tcx.instantiate_bound_regions_with_erased(tcx.erase_and_anonymize_regions(output_ty));
+                    tcx.mk_fn_sig(inputs, output, false, Safety::Safe, rustc_abi::ExternAbi::Rust)
                 }
                 _ => bug!("{:?}", self_arg.kind()),
             }
@@ -77,7 +81,7 @@ pub fn fn_trait_method_sig<'tcx>(
         // Sometimes closures can be a part of the vtable, since they can implicitly implement Fn
         // and FnMut. We can extract the signature for them directly.
         ty::Closure(_, closure_args) => erase_regions_in_sig(
-            tcx.signature_unclosure(closure_args.as_closure().sig(), Unsafety::Normal),
+            tcx.signature_unclosure(closure_args.as_closure().sig(), Safety::Safe),
             tcx,
         ),
         _ => bug!(),
