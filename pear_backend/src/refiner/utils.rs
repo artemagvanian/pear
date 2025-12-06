@@ -1,11 +1,11 @@
-use rustc_middle::ty::{self, FnSig, Instance, InstanceDef, Ty};
+use rustc_middle::ty::{self, FnSig, Instance, InstanceKind, Ty};
 
 pub fn is_virtual<'tcx>(instance: Instance<'tcx>) -> bool {
-    matches!(instance.def, InstanceDef::Virtual(..))
+    matches!(instance.def, InstanceKind::Virtual(..))
 }
 
 pub fn is_intrinsic<'tcx>(instance: Instance<'tcx>) -> bool {
-    matches!(instance.def, InstanceDef::Intrinsic(..))
+    matches!(instance.def, InstanceKind::Intrinsic(..))
 }
 
 /// Checks if type a is equivalent to type b taking into account subtyping relations.
@@ -31,7 +31,7 @@ pub fn fn_sig_eq_with_subtyping<'tcx>(fn_sig_a: FnSig<'tcx>, fn_sig_b: FnSig<'tc
                 .all(|(ty_a, ty_b)| ty_eq_with_subtyping(ty_a, ty_b))
     };
     ty_eq_with_subtyping
-        && fn_sig_a.unsafety == fn_sig_b.unsafety
+        && fn_sig_a.safety == fn_sig_b.safety
         && fn_sig_a.c_variadic == fn_sig_b.c_variadic
         && fn_sig_a.abi == fn_sig_b.abi
 }
