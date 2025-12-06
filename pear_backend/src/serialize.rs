@@ -1,14 +1,15 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::mono::MonoItem,
     ty::{FnSig, Instance},
 };
+
 use rustc_span::Span;
 use serde::Serializer;
-use serde::ser::SerializeSeq;
+use serde::ser::{Serialize, SerializeSeq};
+use rustc_public::mir::mono::MonoItem; 
 
-use crate::{reachability::Node, refiner::RefinedNode, TransitiveRefinedNode, PanicEntry};
+use crate::{reachability::{Node, CollectedNode}, refiner::RefinedNode, TransitiveRefinedNode, PanicEntry};
 
 pub fn serialize_def_id<S>(def_id: &DefId, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -21,17 +22,17 @@ pub fn serialize_mono_item<S>(mono_item: &MonoItem, serializer: S) -> Result<S::
 where
     S: Serializer,
 {
-    serializer.serialize_str(mono_item.to_string().as_str())
+    serializer.serialize_str(mono_item.serialize())
 }
 
 pub fn serialize_edges<'tcx, S>(
-    edges: &FxHashMap<MonoItem<'tcx>, FxHashSet<Node<'tcx>>>,
+    edges: &FxHashMap<MonoItem, FxHashSet<CollectedNode>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.collect_map(edges.iter().map(|(k, v)| (k.to_string(), v)))
+    serializer.collect_map(edges.iter().map(|(k, v)| (k.serialize(), v)))
 }
 
 pub fn serialize_refined_edges<'tcx, S>(
