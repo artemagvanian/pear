@@ -42,7 +42,7 @@ pub trait LocalAnalysis<'tcx> {
             target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
             analysis: self,
         };
-        tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+        tcx.hir_visit_all_item_likes_in_crate(&mut vis);
     }
 }
 
@@ -55,9 +55,6 @@ struct DumpingVisitor<'tcx, 'a, A: LocalAnalysis<'tcx>> {
 
 impl<'tcx, 'a, A: LocalAnalysis<'tcx>> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx, 'a, A> {
     type NestedFilter = OnlyBodies;
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
-    }
 
     fn visit_fn(
         &mut self,
