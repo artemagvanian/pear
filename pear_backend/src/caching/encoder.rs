@@ -29,12 +29,14 @@ use rustc_const_eval::interpret::AllocId;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_span::{SpanEncoder, SpanDecoder}; 
 use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{BytePos, FileName, RealFileName, Span, SpanData, SyntaxContext, DUMMY_SP};
-use rustc_type_ir::{TyDecoder, TyEncoder};
+use rustc_middle::ty::codec::{TyEncoder, TyDecoder};  
+use rustc_span::{Symbol, ByteSymbol, ExpnId, def_id::DefId, AttrId, }; // use rustc_public Symbol and DefId instead? 
 
 macro_rules! encoder_methods {
     ($($name:ident($ty:ty);)*) => {
@@ -101,8 +103,42 @@ impl<'tcx> Encoder for PearEncoder<'tcx> {
     }
 }
 
-impl<'tcx> TyEncoder for PearEncoder<'tcx> {
-    type I = TyCtxt<'tcx>;
+// TODO(corinn) does this impl need real content now?
+impl SpanEncoder for PearEncoder<'_> {
+    fn encode_span(&mut self, span: rustc_span::Span) {
+        todo!()
+    }
+    
+    fn encode_symbol(&mut self, sym: Symbol) {
+        todo!()
+    }
+
+    fn encode_byte_symbol(&mut self, byte_sym: ByteSymbol) {
+        todo!()
+    }
+
+    fn encode_expn_id(&mut self, expn_id: ExpnId) {
+        todo!()
+    }
+
+    fn encode_syntax_context(&mut self, syntax_context: SyntaxContext) {
+        todo!()
+    }
+
+    fn encode_crate_num(&mut self, crate_num: CrateNum) {
+        todo!()
+    }
+
+    fn encode_def_index(&mut self, def_index: DefIndex) {
+        todo!()
+    }
+
+    fn encode_def_id(&mut self, def_id: DefId) {
+        todo!()
+    }
+}
+
+impl<'tcx> TyEncoder<'tcx> for PearEncoder<'tcx> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     fn position(&self) -> usize {
@@ -111,17 +147,17 @@ impl<'tcx> TyEncoder for PearEncoder<'tcx> {
 
     fn type_shorthands(
         &mut self,
-    ) -> &mut FxHashMap<<Self::I as rustc_type_ir::Interner>::Ty, usize> {
+    ) -> &mut FxHashMap<Ty<'tcx>, usize> {
         &mut self.type_shorthands
     }
 
     fn predicate_shorthands(
         &mut self,
-    ) -> &mut FxHashMap<rustc_type_ir::PredicateKind<Self::I>, usize> {
+    ) -> &mut FxHashMap<ty::PredicateKind<'tcx>, usize> {
         &mut self.predicate_shorthands
     }
 
-    fn encode_alloc_id(&mut self, alloc_id: &<Self::I as rustc_type_ir::Interner>::AllocId) {
+    fn encode_alloc_id(&mut self, alloc_id: &AllocId) {
         u64::from(alloc_id.0).encode(self)
     }
 }
@@ -144,7 +180,7 @@ impl<'tcx, 'a> PearDecoder<'tcx, 'a> {
     pub fn new(tcx: TyCtxt<'tcx>, buf: &'a [u8]) -> Self {
         Self {
             tcx,
-            mem_decoder: MemDecoder::new(buf, 0),
+            mem_decoder: MemDecoder::new(buf, 0).expect("MemDecoder::new() failed"),
             shorthand_map: Default::default(),
         }
     }
@@ -162,12 +198,49 @@ pub fn decode_from_file<'tcx, V: for<'a> Decodable<PearDecoder<'tcx, 'a>>>(
     Ok(V::decode(&mut decoder))
 }
 
-impl<'tcx, 'a> TyDecoder for PearDecoder<'tcx, 'a> {
+impl<'a, 'tcx> SpanDecoder for PearDecoder<'a, 'tcx> {
+    fn decode_span(&mut self) -> Span {
+       self.mem_decoder.decode_span()
+    }
+
+    fn decode_symbol(&mut self) -> Symbol {
+       self.mem_decoder.decode_symbol()
+    }
+
+    fn decode_byte_symbol(&mut self) -> ByteSymbol {
+        self.mem_decoder.decode_byte_symbol()
+    }
+
+    fn decode_expn_id(&mut self) -> ExpnId {
+        self.mem_decoder.decode_expn_id()
+    }
+
+    fn decode_syntax_context(&mut self) -> SyntaxContext {
+        self.mem_decoder.decode_syntax_context()
+   }
+
+    fn decode_crate_num(&mut self) -> CrateNum {
+        self.mem_decoder.decode_crate_num()
+    }
+
+    fn decode_def_index(&mut self) -> DefIndex {
+        self.mem_decoder.decode_def_index()
+    }
+
+    fn decode_def_id(&mut self) -> DefId {
+       self.mem_decoder.decode_def_id()
+    }
+
+   fn decode_attr_id(&mut self) -> AttrId {
+        self.mem_decoder.decode_attr_id()
+  }
+
+}
+
+impl<'tcx, 'a> TyDecoder<'_> for PearDecoder<'tcx, 'a> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
-    type I = TyCtxt<'tcx>;
-
-    fn interner(&self) -> Self::I {
+    fn interner(&self) -> TyCtxt<'tcx> {
         self.tcx
     }
 
@@ -175,9 +248,9 @@ impl<'tcx, 'a> TyDecoder for PearDecoder<'tcx, 'a> {
         &mut self,
         shorthand: usize,
         or_insert_with: F,
-    ) -> <Self::I as ty::Interner>::Ty
+    ) -> <TyCtxt<'tcx> as ty::Interner>::Ty
     where
-        F: FnOnce(&mut Self) -> <Self::I as ty::Interner>::Ty,
+        F: FnOnce(&mut Self) -> <TyCtxt<'tcx> as ty::Interner>::Ty,
     {
         if let Some(ty) = self.shorthand_map.get(&shorthand) {
             return *ty;
@@ -187,7 +260,7 @@ impl<'tcx, 'a> TyDecoder for PearDecoder<'tcx, 'a> {
         ty
     }
 
-    fn decode_alloc_id(&mut self) -> <Self::I as ty::Interner>::AllocId {
+    fn decode_alloc_id(&mut self) -> AllocId {
         AllocId(NonZeroU64::new(u64::decode(self)).unwrap())
     }
 
@@ -195,7 +268,7 @@ impl<'tcx, 'a> TyDecoder for PearDecoder<'tcx, 'a> {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let new_opaque = MemDecoder::new(self.mem_decoder.data(), pos);
+        let new_opaque = MemDecoder::new(&self.mem_decoder.read_array(), pos).expect("MemDecoder::new failed");
         let old_opaque = std::mem::replace(&mut self.mem_decoder, new_opaque);
         let r = f(self);
         self.mem_decoder = old_opaque;
