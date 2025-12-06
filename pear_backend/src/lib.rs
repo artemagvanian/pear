@@ -1,6 +1,7 @@
-#![feature(rustc_private, box_patterns, min_specialization, let_chains)]
+#![feature(rustc_private, box_patterns, min_specialization, impl_trait_in_assoc_type)]
 
 #[macro_use]
+extern crate rustc_abi; 
 extern crate rustc_middle;
 extern crate polonius_engine;
 extern crate rustc_borrowck;
@@ -17,10 +18,11 @@ extern crate rustc_macros;
 extern crate rustc_monomorphize;
 extern crate rustc_serialize;
 extern crate rustc_session;
-extern crate rustc_smir;
+//extern crate rustc_smir;
 extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
+extern crate rustc_public; 
 
 use rustc_utils::mir::borrowck_facts;
 use std::process::Command;
@@ -32,9 +34,11 @@ mod refiner;
 mod serialize;
 mod utils;
 
+use rustc_middle::ty::TyCtxt;
+
 pub use analysis::global_analysis::GlobalAnalysis;
 pub use analysis::local_analysis::LocalAnalysis;
-pub use reachability::{collect_from, Node, Usage, UsageGraph};
+pub use reachability::{collect_reachable_items, filter_crate_items, CallGraph};
 pub use refiner::{refine_from, RefinedNode, RefinedUsageGraph, TransitiveRefinedSubGraph, TransitiveRefinedNode, PanicDict, PanicEntry};
 
 fn get_default_rustc_target() -> Result<String, String> {
@@ -129,11 +133,9 @@ impl<A: for<'a> LocalAnalysis<'a>> rustc_driver::Callbacks for LocalAnalysisCall
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            self.local_analysis.dump_local_analysis_results(tcx);
-        });
+        self.local_analysis.dump_local_analysis_results(tcx);
         rustc_driver::Compilation::Continue
     }
 }
@@ -164,22 +166,17 @@ impl<G: for<'a> GlobalAnalysis<'a>, A: for<'a> LocalAnalysis<'a>> rustc_driver::
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
-    ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            self.local_analysis.dump_local_analysis_results(tcx);
-        });
+        tcx: TyCtxt<'tcx>,
+    ) -> rustc_driver::Compilation { 
+        self.local_analysis.dump_local_analysis_results(tcx);
         rustc_driver::Compilation::Continue
     }
 
     fn after_analysis<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| self.global_analysis.perform_analysis(tcx))
+       self.global_analysis.perform_analysis(tcx)
     }
 }
