@@ -5,7 +5,6 @@
 
 mod collections;
 mod pear;
-mod scrutinizer;
 mod kani;
 
 macro_rules! redefine {

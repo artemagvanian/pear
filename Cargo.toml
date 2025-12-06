@@ -7,11 +7,6 @@ resolver = "2"
 rustc_plugin = { path = "./rustc_plugin/crates/rustc_plugin" }
 rustc_utils = { path = "./rustc_plugin/crates/rustc_utils" }
 
-flowistry = { path = "./flowistry/crates/flowistry" }
-indexical = { version = "0.3.1", default-features = false, features = [
-    "rustc",
-] }
-
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 regex = { version = "1" }
