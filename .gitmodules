@@ -1,6 +1,3 @@
 [submodule "rustc_plugin"]
 	path = rustc_plugin
 	url = git@github.com:corinnt/rustc_plugin.git
-[submodule "flowistry"]
-	path = flowistry
-	url = git@github.com:artemagvanian/flowistry.git
