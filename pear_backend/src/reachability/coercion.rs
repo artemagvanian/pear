@@ -60,7 +60,7 @@ use log::trace;
 ///    - Extract the tail element of the struct which are of type `T` and `U`, respectively.
 /// 4. Coercion between smart pointers of wrapper structs.
 ///    - Apply the logic from item 2 then item 3.
-pub fn extract_unsize_casting_stable(
+pub(crate) fn extract_unsize_casting_stable(
     tcx: TyCtxt,
     src_ty: TyStable,
     dst_ty: TyStable,
@@ -76,12 +76,12 @@ pub fn extract_unsize_casting_stable(
     }
 }
 
-pub fn extract_unsize_casting<'tcx>(
+pub(crate) fn extract_unsize_casting<'tcx>(
     tcx: TyCtxt<'tcx>,
     src_ty: Ty<'tcx>,
     dst_ty: Ty<'tcx>,
 ) -> CoercionBase<'tcx> {
-    trace!(?src_ty, ?dst_ty, "extract_unsize_casting");
+    trace!("extract_unsize_casting {src_ty:?} {dst_ty:?}");
     // Iterate over the pointer structure to find the builtin pointer that will store the metadata.
     let coerce_info = CoerceUnsizedIterator::new(
         tcx,
@@ -103,7 +103,7 @@ pub fn extract_unsize_casting<'tcx>(
         dst_pointee_ty,
         TypingEnv::fully_monomorphized(),
     );
-    trace!(?src_base_ty, ?dst_base_ty, "extract_unsize_casting result");
+    trace!("extract_unsize_casting result {src_base_ty:?} {dst_base_ty:?}");
     assert!(
         dst_base_ty.is_trait() || dst_base_ty.is_slice(),
         "Expected trait or slice as destination of unsized cast, but found {dst_base_ty:?}"
@@ -118,15 +118,15 @@ pub fn extract_unsize_casting<'tcx>(
 /// vtable that represents the `impl Debug for String`. So this type will carry the `String` type
 /// as the `src_ty` and the `dyn Debug` trait as `dst_ty`.
 #[derive(Debug)]
-pub struct CoercionBase<'tcx> {
-    pub src_ty: Ty<'tcx>,
-    pub dst_ty: Ty<'tcx>,
+pub(crate) struct CoercionBase<'tcx> {
+    pub(crate) src_ty: Ty<'tcx>,
+    pub(crate) dst_ty: Ty<'tcx>,
 }
 
 #[derive(Debug)]
-pub struct CoercionBaseStable {
-    pub src_ty: TyStable,
-    pub dst_ty: TyStable,
+pub(crate) struct CoercionBaseStable {
+    pub(crate) src_ty: TyStable,
+    pub(crate) dst_ty: TyStable,
 }
 /// Iterates over the coercion path of a structure that implements `CoerceUnsized<T>` trait.
 /// The `CoerceUnsized<T>` trait indicates that this is a pointer or a wrapper for one, where
@@ -143,7 +143,7 @@ pub struct CoercionBaseStable {
 /// The first element of the iteration will always be the starting types.
 /// The last element of the iteration will always be pointers to `T` and `U`.
 /// After unsized element has been found, the iterator will return `None`.
-pub struct CoerceUnsizedIterator<'tcx> {
+pub(crate)struct CoerceUnsizedIterator<'tcx> {
     tcx: TyCtxt<'tcx>,
     src_ty: Option<TyStable>,
     dst_ty: Option<TyStable>,
@@ -151,17 +151,17 @@ pub struct CoerceUnsizedIterator<'tcx> {
 
 /// Represent the information about a coercion.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CoerceUnsizedInfo {
+pub(crate) struct CoerceUnsizedInfo {
     /// The name of the field from the current types that differs between each other.
-    pub field: Option<Symbol>,
+    pub(crate)field: Option<Symbol>,
     /// The type being coerced.
-    pub src_ty: TyStable,
+    pub(crate) src_ty: TyStable,
     /// The type that is the result of the coercion.
-    pub dst_ty: TyStable,
+    pub(crate) dst_ty: TyStable,
 }
 
 impl<'tcx> CoerceUnsizedIterator<'tcx> {
-    pub fn new(
+    pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         src_ty: TyStable,
         dst_ty: TyStable,
