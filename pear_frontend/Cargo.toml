@@ -9,7 +9,6 @@ rustc_private = true
 [dependencies]
 pear_backend = { path = "../pear_backend" }
 
-flowistry = { workspace = true }
 rustc_plugin = { workspace = true }
 rustc_utils = { workspace = true }
 

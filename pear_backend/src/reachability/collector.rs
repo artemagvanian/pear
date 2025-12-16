@@ -88,7 +88,7 @@ use log::trace;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::lang_items::LangItem;
-use rustc_hir::{self as hir, Unsafety};
+use rustc_hir::{self as hir, Safety};
 use rustc_middle::mir::interpret::{AllocId, ErrorHandled, GlobalAlloc, Scalar};
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::TyContext;
@@ -100,9 +100,11 @@ use rustc_middle::ty::adjustment::{CustomCoerceUnsized, PointerCoercion};
 use rustc_middle::ty::layout::ValidityRequirement;
 use rustc_middle::ty::normalize_erasing_regions::NormalizationError;
 use rustc_middle::ty::{
-    self, Instance, InstanceDef, Ty, TyCtxt, TypeFoldable, TypeVisitableExt, VtblEntry,
+    self, Instance, Ty, TyCtxt, TypeFoldable, TypeVisitableExt, VtblEntry,
 };
 use rustc_middle::ty::{FnSig, GenericArgs};
+use rustc_public::mir::mono::InstanceDef;
+
 use serde::Serialize;
 
 use crate::serialize::{serialize_def_id, serialize_edges, serialize_mono_item, serialize_sig};
@@ -209,6 +211,10 @@ impl<'tcx> Node<'tcx> {
     }
 }
 
+
+/* Ok, the UsageGraph is equivalent to the CallGraph in Kani. 
+
+The main different is that this MonoItem = kani Node, and this Node = kani CollectedNode */
 #[derive(Debug, Serialize)]
 pub struct UsageGraph<'tcx> {
     // Maps every mono item to the mono items used by it.
@@ -282,7 +288,8 @@ fn collect_items_rec<'tcx>(
         }
         MonoItem::Static(def_id) => {
             let instance = Instance::mono(tcx, def_id);
-            let ty = instance.ty(tcx, ty::ParamEnv::reveal_all());
+            // possible that this would panic on a nested static, as it would not have a type
+            let ty = instance.ty(tcx, ty::TypingEnv::fully_monomorphized());
             visit_drop_use(
                 tcx,
                 ty,
@@ -301,7 +308,7 @@ fn collect_items_rec<'tcx>(
             if tcx.needs_thread_local_shim(def_id) {
                 used_items.push(Node::new(
                     MonoItem::Fn(Instance {
-                        def: InstanceDef::ThreadLocalShim(def_id),
+                        def: rustc_middle::ty::InstanceKind::ThreadLocalShim(def_id),
                         args: GenericArgs::empty(),
                     }),
                     Usage::ThreadLocalShim,
@@ -333,7 +340,7 @@ fn collect_items_rec<'tcx>(
                         }
                         hir::InlineAsmOperand::SymStatic { path: _, def_id } => {
                             trace!("collecting static {:?}", def_id);
-                            used_items.push(Node::new(MonoItem::Static(*def_id), Usage::InlineAsm));
+                            used_items.push(Node::new(MonoItem::Static(def_id), Usage::InlineAsm));
                         }
                         hir::InlineAsmOperand::In { .. }
                         | hir::InlineAsmOperand::Out { .. }
@@ -384,7 +391,7 @@ impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
             .instance
             .try_instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                ty::ParamEnv::reveal_all(),
+                ty::TypingEnv::fully_monomorphized(), 
                 ty::EarlyBinder::bind(value),
             );
         if self.attempt_resolving_partial {
@@ -395,6 +402,7 @@ impl<'a, 'tcx> MirUsedCollector<'a, 'tcx> {
     }
 }
 
+// impl MirVisitor for MonoItemsFnCollector<'_, '_> {
 impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
     fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: Location) {
         trace!("visiting rvalue {:?}", *rvalue);
@@ -436,7 +444,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                 }
             }
             mir::Rvalue::Cast(
-                mir::CastKind::PointerCoercion(PointerCoercion::ReifyFnPointer),
+                mir::CastKind::PointerCoercion(PointerCoercion::ReifyFnPointer, _),
                 ref operand,
                 _,
             ) => {
@@ -461,7 +469,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                 );
             }
             mir::Rvalue::Cast(
-                mir::CastKind::PointerCoercion(PointerCoercion::ClosureFnPointer(_)),
+                mir::CastKind::PointerCoercion(PointerCoercion::ClosureFnPointer(_), _),
                 ref operand,
                 _,
             ) => {
@@ -476,11 +484,10 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                             def_id,
                             args,
                             ty::ClosureKind::FnOnce,
-                        )
-                        .expect("failed to normalize and resolve closure during codegen");
+                        ); 
                         let sig = erase_regions_in_sig(
                             self.tcx
-                                .signature_unclosure(args.as_closure().sig(), Unsafety::Normal),
+                                .signature_unclosure(args.as_closure().sig(), Safety::Safe),
                             self.tcx,
                         );
                         self.output
@@ -501,15 +508,17 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
         self.super_rvalue(rvalue, location);
     }
 
+    // TODO(corinn) figure out what this was supposed to be accomplishing
+
     /// This does not walk the constant, as it has been handled entirely here and trying
     /// to walk it would attempt to evaluate the `ty::Const` inside, which doesn't necessarily
     /// work, as some constants cannot be represented in the type system.
-    fn visit_constant(&mut self, constant: &mir::ConstOperand<'tcx>, location: Location) {
+    fn visit_const_operand(&mut self, constant: &mir::ConstOperand<'tcx>, location:Location) {
         let Ok(const_) = self.monomorphize(constant.const_) else {
             return;
         };
-        let param_env = ty::ParamEnv::reveal_all();
-        let val = match const_.eval(self.tcx, param_env, None) {
+        let typing_env = ty::TypingEnv::fully_monomorphized();
+        let val = match const_.eval(self.tcx, typing_env, constant.span) {
             Ok(v) => v,
             Err(ErrorHandled::Reported(..)) => return,
             Err(ErrorHandled::TooGeneric(..)) => span_bug!(
@@ -526,7 +535,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
         trace!("visiting terminator {:?} @ {:?}", terminator, location);
         let tcx = self.tcx;
         let push_mono_lang_item = |this: &mut Self, lang_item: LangItem, usage: Usage<'tcx>| {
-            let instance = Instance::mono(tcx, tcx.require_lang_item(lang_item, None));
+            let instance = Instance::mono(tcx, tcx.require_lang_item(lang_item, terminator.source_info.span));
             this.output.push(create_fn_mono_item(instance, usage));
         };
 
@@ -542,7 +551,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
                     let sig = match self.instance.args[0].as_type().unwrap().kind() {
                         ty::Closure(_, args) => erase_regions_in_sig(
                             self.tcx
-                                .signature_unclosure(args.as_closure().sig(), Unsafety::Normal),
+                                .signature_unclosure(args.as_closure().sig(), Safety::Safe),
                             self.tcx,
                         ),
                         _ => bug!(),
@@ -704,7 +713,7 @@ fn visit_instance_use<'tcx>(
     // be lowered in codegen to nothing or a call to panic_nounwind. So if we encounter any
     // of those intrinsics, we need to include a mono item for panic_nounwind, else we may try to
     // codegen a call to that function without generating code for the function itself.
-    if let ty::InstanceDef::Intrinsic(def_id) = instance.def {
+    if let InstanceDef::Intrinsic(def_id) = instance.def {
         let name = tcx.item_name(def_id);
         if let Some(_requirement) = ValidityRequirement::from_intrinsic(name) {
             let def_id = tcx.lang_items().get(LangItem::PanicNounwind).unwrap();
@@ -714,28 +723,28 @@ fn visit_instance_use<'tcx>(
     }
 
     match instance.def {
-        ty::InstanceDef::Virtual(..) | ty::InstanceDef::Intrinsic(_) => {
+        InstanceDef::Virtual(..) | InstanceDef::Intrinsic(_) => {
             if !is_direct_call {
                 bug!("{:?} being reified", instance);
             }
         }
-        ty::InstanceDef::ThreadLocalShim(..) => {
+        InstanceDef::ThreadLocalShim(..) => {
             bug!("{:?} being reified", instance);
         }
-        ty::InstanceDef::DropGlue(_, None) => {
+        InstanceDef::DropGlue(_, None) => {
             // Don't need to emit noop drop glue if we are calling directly.
             if !is_direct_call {
                 output.push(create_fn_mono_item(instance, usage));
             }
         }
-        ty::InstanceDef::DropGlue(_, Some(_))
-        | ty::InstanceDef::VTableShim(..)
-        | ty::InstanceDef::ReifyShim(..)
-        | ty::InstanceDef::ClosureOnceShim { .. }
-        | ty::InstanceDef::Item(..)
-        | ty::InstanceDef::FnPtrShim(..)
-        | ty::InstanceDef::CloneShim(..)
-        | ty::InstanceDef::FnPtrAddrShim(..) => {
+        InstanceDef::DropGlue(_, Some(_))
+        | InstanceDef::VTableShim(..)
+        | InstanceDef::ReifyShim(..)
+        | InstanceDef::ClosureOnceShim { .. }
+        | InstanceDef::Item(..)
+        | InstanceDef::FnPtrShim(..)
+        | InstanceDef::CloneShim(..)
+        | InstanceDef::FnPtrAddrShim(..) => {
             output.push(create_fn_mono_item(instance, usage));
         }
     }
@@ -817,6 +826,8 @@ fn find_vtable_types_for_unsizing<'tcx>(
         }
 
         // T as dyn* Trait
+        //     Dynamic(I::BoundExistentialPredicates, I::Region),
+
         (_, &ty::Dynamic(_, _, ty::DynStar)) => ptr_vtable(source_ty, target_ty),
 
         (&ty::Adt(source_adt_def, source_args), &ty::Adt(target_adt_def, target_args)) => {
@@ -966,6 +977,7 @@ fn collect_used_items<'tcx>(
     let body = tcx.instance_mir(instance.def);
     // Here we rely on the visitor also visiting `required_consts`, so that we evaluate them
     // and abort compilation if any of them errors.
+    // MirUsedCollector == kani MonoItemFnCollector
     MirUsedCollector {
         tcx,
         body,
@@ -979,7 +991,7 @@ fn collect_used_items<'tcx>(
 
 fn collect_const_value<'tcx>(
     tcx: TyCtxt<'tcx>,
-    value: mir::ConstValue<'tcx>,
+    value: mir::ConstValue,
     output: &mut UsedMonoItems<'tcx>,
 ) {
     match value {

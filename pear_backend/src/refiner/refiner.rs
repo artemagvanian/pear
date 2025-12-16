@@ -6,11 +6,10 @@ use rustc_hir::{def_id::DefId, LangItem};
 use rustc_middle::{
     mir::{visit::Visitor, Body, Location, Terminator, TerminatorKind},
     ty::{
-        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceDef, ParamEnv, Ty, TyCtxt,
-        TyKind, TypeFoldable,
-    },
-    query::Key,
+        self, EarlyBinder, FnSig, GenericArgsRef, Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeFoldable, TypingEnv
+    }
 };
+use rustc_public::mir::mono::InstanceDef; 
 use rustc_span::{Span, DUMMY_SP};
 use serde::Serialize;
 
@@ -19,7 +18,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use regex::Regex;
 
 use crate::{
-    reachability::{ImplType, Node, Usage},
+    reachability::{Node,  CollectedNode, CollectionReason, CallGraph},
     refiner::utils::{fn_sig_eq_with_subtyping, is_intrinsic, is_virtual},
     serialize::{
         serialize_instance, serialize_instance_vec, serialize_refined_edges, serialize_span,
@@ -28,6 +27,12 @@ use crate::{
     utils::{erase_regions_in_sig, fn_trait_method_sig},
 };
 
+type UsageGraph = CallGraph;
+/* CallGraph maps Node -> CollectedNode
+
+    UsageGraph maps MonoItem -> Node
+
+*/
 #[derive(Clone, Serialize)]
 pub struct PanicDict<'tcx> {
     #[serde(serialize_with = "serialize_panic_dict")]
@@ -269,7 +274,7 @@ impl<'tcx> TransitiveRefinedSubGraph<'tcx> {
         let panic_re = Regex::new(r"# Panics").expect("Regex failure");
         let panic_full_re = Regex::new(r"(# Panics\s.*)(#)").expect("Regex failure");
         let panic_full_end_re = Regex::new(r"# Panics\s.*").expect("Regex failure");
-        let attrs = tcx.get_attrs_unchecked(instance.def_id());
+        let attrs = tcx.get_all_attrs(instance.def_id());
         let mut doc_string = String::from("");
         for attr in attrs {
             if let Some(str) = attr.doc_str() {
@@ -700,14 +705,14 @@ impl<'tcx> StackItem<'tcx> {
 pub struct RefinerVisitor<'tcx> {
     current_instance: Instance<'tcx>,
     current_body: Body<'tcx>,
-    reachable_indirect: FxHashSet<Node<'tcx>>,
+    reachable_indirect: Vec<CollectedNode>,
     refined_usage_graph: RefinedUsageGraph<'tcx>,
     call_stack: Vec<StackItem<'tcx>>,
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> RefinerVisitor<'tcx> {
-    pub fn new(root: Instance<'tcx>, reachable: FxHashSet<Node<'tcx>>, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(root: Instance<'tcx>, reachable: Vec<CollectedNode>, tcx: TyCtxt<'tcx>) -> Self {
         // We do not instantiate and normalize body just yet but do it lazily instead to support
         // partially parametric instances.
         let root_body = tcx.instance_mir(root.def).clone();
@@ -743,11 +748,9 @@ impl<'tcx> RefinerVisitor<'tcx> {
             .iter()
             .filter_map(|reachable_indirect| {
                 // Try instantiating the signature of an instance with generic args in scope.
-                match reachable_indirect.usage() {
-                    Usage::StaticFn {
-                        sig: indirect_fn_sig,
-                    }
-                    | Usage::FnPtr {
+                match reachable_indirect.reason() {
+                    CollectionReason::Static
+                    | CollectionReason:: {
                         sig: indirect_fn_sig,
                     }
                     | Usage::StaticClosureShim {
@@ -779,7 +782,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
         let refined_candidates: Vec<Instance<'tcx>> = self
             .reachable_indirect
             .iter()
-            .filter(|reachable_indirect| match reachable_indirect.usage() {
+            .filter(|reachable_indirect| match reachable_indirect.reason() {
                 Usage::VtableItem { impl_type, .. } => {
                     let possible_instance = reachable_indirect.expect_instance();
                     match impl_type {
@@ -819,7 +822,7 @@ impl<'tcx> RefinerVisitor<'tcx> {
         let refined_candidates: Vec<Instance<'tcx>> = self
             .reachable_indirect
             .iter()
-            .filter(|reachable_indirect| match reachable_indirect.usage() {
+            .filter(|reachable_indirect| match reachable_indirect.reason() {
                 Usage::FnTraitItem { sig } => indirect_sig == sig,
                 _ => false,
             })
@@ -851,10 +854,10 @@ impl<'tcx> RefinerVisitor<'tcx> {
 
     fn instantiate_with_current_instance<T: TypeFoldable<TyCtxt<'tcx>>>(
         &self,
-        v: EarlyBinder<T>,
-    ) -> T {
+        v: rustc_type_ir::EarlyBinder<TyCtxt<'tcx>, T>, 
+    ) {
         self.current_instance
-            .instantiate_mir_and_normalize_erasing_regions(self.tcx, ParamEnv::reveal_all(), v)
+            .instantiate_mir_and_normalize_erasing_regions(self.tcx, TypingEnv::fully_monomorphized(), v)
     }
 
     fn refine_rec(&mut self, fn_ty: Ty<'tcx>, span: Span, terminator_span: Span) {
@@ -863,14 +866,15 @@ impl<'tcx> RefinerVisitor<'tcx> {
 
         let refined = match fn_ty.kind().clone() {
             TyKind::FnDef(def_id, generic_args) => {
-                let instance = ty::Instance::expect_resolve(
+                let instance: Instance<'_> = ty::Instance::expect_resolve(
                     self.tcx,
-                    ParamEnv::reveal_all(),
+                    TypingEnv::fully_monomorphized(),
                     def_id,
                     generic_args,
+                    self.tcx.def_span(def_id)
                 );
-                match instance.def {
-                    InstanceDef::Virtual(method_def_id, ..) => RefinedNode::Refined {
+                match instance.def { // of type InstanceKind
+                    InstanceKind::Virtual(method_def_id, ..) => RefinedNode::Refined {
                         instances: self.candidates_for_virtual(method_def_id, instance.args),
                         span,
                         terminator_span,
@@ -882,8 +886,11 @@ impl<'tcx> RefinerVisitor<'tcx> {
                     },
                 }
             }
-            TyKind::FnPtr(poly_fn_sig) => {
-                let fn_sig = erase_regions_in_sig(poly_fn_sig, self.tcx);
+            // TyKind::FnPtr(ty::Binder<I, FnSigTys<TyCtxt>>, FnHeader<TyCtxt<'_>>>)
+            TyKind::FnPtr(binder, fn_header) => {
+                // type PolyFnSig is alias of Binder<'tcx, FnSig<'tcx>>;
+                let poly_fn_sig = binder.with(fn_header);
+                let fn_sig: rustc_type_ir::FnSig<TyCtxt<'_>> = erase_regions_in_sig(poly_fn_sig, self.tcx);
                 RefinedNode::Refined {
                     instances: self.candidates_for_fn_ptr(fn_sig),
                     span,
@@ -971,7 +978,7 @@ impl<'tcx> Visitor<'tcx> for RefinerVisitor<'tcx> {
             }
             TerminatorKind::Drop { ref place, .. } => {
                 let ty = place.ty(&self.current_body, self.tcx).ty;
-                let def_id = self.tcx.require_lang_item(LangItem::DropInPlace, None);
+                let def_id = self.tcx.require_lang_item(LangItem::DropInPlace, DUMMY_SP); // span only used to emit error
                 let args = self.tcx.mk_args(&[ty.into()]);
                 self.refine_rec(
                     self.tcx.type_of(def_id).instantiate(self.tcx, args),
