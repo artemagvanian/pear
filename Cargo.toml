@@ -1,6 +1,6 @@
 [workspace]
 members = ["pear_backend", "pear_frontend"]
-exclude = ["tests"]
+exclude = ["tests", "rustc_plugin"]
 resolver = "2"
 
 [workspace.dependencies]
